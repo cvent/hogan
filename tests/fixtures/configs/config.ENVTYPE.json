@@ -1,0 +1,41 @@
+{
+  "Environment": "ENVTYPE",
+  "EnvironmentType": "alpha",
+  "ConfigData": {
+    "ConfigEnabled": true,
+    "Region": {
+      "Key": "ENVTYPE"
+    },
+    "DB": {
+      "Endpoint": "host-name\\TEST\""
+    },
+    "Memcache": {
+      "Servers": [
+        {
+          "Endpoint": "192.168.1.100",
+          "Port": "1122"
+        },
+        {
+          "Endpoint": "192.168.1.101",
+          "Port": "1122"
+        },
+        {
+          "Endpoint": "192.168.1.102",
+          "Port": "1122"
+        }
+      ]
+    },
+    "NonSlashService": {
+      "endpoint": "https://nonslash.com",
+      "notAnEndpoint": "no-protocol.no-slash.com"
+    },
+    "SlashService": {
+      "endpoint": "https://slash.com/"
+    },
+    "PathService": {
+      "endpoint": "https://path.com/path/remove-this",
+      "trailingSlash": "https://trailing-path.com/path/should-still-remove/"
+    },
+    "UpperCaseString": "UPPERCASE"
+  }
+}
