@@ -1,4 +1,5 @@
 #![warn(unused)]
+#![feature(proc_macro, wasm_import_module, wasm_custom_section)]
 
 #[macro_use]
 extern crate failure;
@@ -7,21 +8,23 @@ extern crate hogan;
 extern crate log;
 extern crate loggerv;
 extern crate regex;
-#[macro_use]
 extern crate structopt;
+extern crate wasm_bindgen;
 
 use failure::Error;
 use hogan::config::environments;
+use hogan::generate_configs;
 use hogan::template::templates;
 use loggerv::Logger;
 use regex::{Regex, RegexBuilder};
-use std::fs::File;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process;
 use structopt::StructOpt;
+use wasm_bindgen::prelude::*;
 
 #[derive(StructOpt, Debug)]
-pub struct App {
+pub struct Args {
     /// The relative path to where the configuration files are located
     #[structopt(long = "configDir", parse(from_os_str))]
     pub config_dir: PathBuf,
@@ -35,11 +38,11 @@ pub struct App {
     pub root_dir: PathBuf,
 
     /// The region to update configs for (regex is accepted)
-    #[structopt(long = "region", default_value = ".+", parse(try_from_str = "App::parse_regex"))]
+    #[structopt(long = "region", default_value = ".+", parse(try_from_str = "Args::parse_regex"))]
     pub region: Regex,
 
     /// The regex to use when looking for template files
-    #[structopt(long = "templateRegex", default_value = "(.*\\.)?template(\\.Release|\\-liquibase|\\-quartz)?\\.([Cc]onfig|yaml|properties)$", parse(try_from_str = "App::parse_regex"))]
+    #[structopt(long = "templateRegex", default_value = "(.*\\.)?template(\\.Release|\\-liquibase|\\-quartz)?\\.([Cc]onfig|yaml|properties)$", parse(try_from_str = "Args::parse_regex"))]
     pub template_regex: Regex,
 
     /// Sets the level of verbosity
@@ -47,15 +50,21 @@ pub struct App {
     pub verbosity: u64,
 }
 
-impl App {
-    fn new() -> App {
-        let mut opts = App::from_args();
+impl Args {
+    fn from_args() -> Args {
+        <Args as StructOpt>::from_args().set_dynamic_defaults()
+    }
 
-        if opts.config_regex.is_none() {
-            opts.config_regex = Regex::new(&format!("config\\.{}\\.json$", opts.region)).ok();
+    pub fn from_vec(vec: Vec<OsString>) -> Args {
+        Args::from_iter(vec.into_iter()).set_dynamic_defaults()
+    }
+
+    fn set_dynamic_defaults(mut self) -> Self {
+        if self.config_regex.is_none() {
+            self.config_regex = Regex::new(&format!("config\\.{}\\.json$", self.region)).ok();
         }
 
-        opts
+        self
     }
 
     fn parse_regex(src: &str) -> Result<Regex, Error> {
@@ -67,49 +76,34 @@ impl App {
 }
 
 fn main() {
-    fn run() -> Result<(), Error> {
-        let opts = App::new();
-
-        Logger::new()
-            .verbosity(opts.verbosity + 1)
-            .level(false)
-            .module_path(true)
-            .init()?;
-
-        let mut handlebars = hogan::transform::handlebars();
-
-        let environments = environments(&opts.config_dir, opts.config_regex.unwrap());
-        info!("Loaded {} config file(s)", environments.len());
-
-        let template_paths = templates(&opts.root_dir, opts.template_regex);
-        info!("Loaded {} template file(s)", template_paths.len());
-
-        for template_path in &template_paths {
-            handlebars.register_template_file(&template_path.to_string_lossy(), template_path)?;
-        }
-
-        for environment in environments {
-            info!("Updating templates for {}", environment.environment);
-
-            for template_path in &template_paths {
-                let template_path = template_path.to_string_lossy();
-                let path = template_path.replace("template", &environment.environment);
-                let mut file = File::create(&path)?;
-
-                debug!("Transforming {}", path);
-                if let Err(e) =
-                    handlebars.render_to_write(&template_path, &environment.config_data, &mut file)
-                {
-                    bail!("Error transforming {} due to {}", &path, e);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    if let Err(e) = run() {
+    if let Err(e) = run(Args::from_args()) {
         error!("{:?}", e);
         process::exit(1);
     }
+}
+
+#[wasm_bindgen]
+pub fn wasm_main(args: String) {
+    if let Err(e) = run(Args::from_iter(args.split(" "))) {
+        error!("{:?}", e);
+        process::exit(1);
+    }
+}
+
+pub fn run(args: Args) -> Result<(), Error> {
+    Logger::new()
+        .verbosity(args.verbosity + 1)
+        .level(false)
+        .module_path(true)
+        .init()?;
+
+    let mut handlebars = hogan::transform::handlebars();
+
+    let environments = environments(&args.config_dir, args.config_regex.unwrap());
+    info!("Loaded {} config file(s)", environments.len());
+
+    let template_paths = templates(&args.root_dir, args.template_regex);
+    info!("Loaded {} template file(s)", template_paths.len());
+
+    generate_configs(&mut handlebars, environments, template_paths)
 }

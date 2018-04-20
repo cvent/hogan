@@ -1,12 +1,10 @@
-use serde_json::{self, Value};
+use find_file_paths;
 use json_patch::merge;
-use walkdir::WalkDir;
 use regex::Regex;
-
+use serde_json::{self, Value};
 use std::path::Path;
 use std::fs::File;
-
-use find_file_paths;
+use walkdir::WalkDir;
 
 pub fn environments(base_path: &Path, filter: Regex) -> Vec<Environment> {
     fn find_env_type_data<'a>(types: &'a Vec<EnvironmentType>, name: &str) -> &'a Value {
