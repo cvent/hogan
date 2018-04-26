@@ -1,24 +1,28 @@
 #![warn(unused)]
 
+#[macro_use]
+extern crate failure;
+extern crate git2;
 extern crate handlebars;
+extern crate hyper;
 extern crate itertools;
 extern crate json_patch;
-#[macro_use]
-extern crate log;
+extern crate mime;
 extern crate regex;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate tempfile;
 extern crate url;
 extern crate walkdir;
+extern crate zip;
 
 pub mod config;
 pub mod transform;
 pub mod template;
 
-use std::path::{Path, PathBuf};
-
 use regex::Regex;
+use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
 pub fn find_file_paths(base_path: &Path, filter: Regex) -> Box<Iterator<Item = PathBuf>> {
@@ -30,8 +34,8 @@ pub fn find_file_paths(base_path: &Path, filter: Regex) -> Box<Iterator<Item = P
             .unwrap_or(false)
     }
 
-    info!("Finding Files: {:?}", base_path);
-    info!("regex: /{}/", filter);
+    println!("Finding Files: {:?}", base_path);
+    println!("regex: /{}/", filter);
 
     Box::new(
         WalkDir::new(base_path)
