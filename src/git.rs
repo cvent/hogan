@@ -15,17 +15,19 @@ impl GitUrl {
     pub fn new(url: &str) -> GitUrl {
         let (base_url, rest) = {
             let split_by_git = url.splitn(2, ".git").collect::<Vec<&str>>();
-            match split_by_git.len() {
-                2 => (format!("{}.git", split_by_git[0]), split_by_git[1]),
-                _ => (String::from(url), ""),
+            if split_by_git.len() == 2 {
+                (format!("{}.git", split_by_git[0]), split_by_git[1])
+            } else {
+                (String::from(url), "")
             }
         };
 
         let (mut path, branch) = {
             let split_by_hash = rest.splitn(2, "#").collect::<Vec<&str>>();
-            match split_by_hash.len() {
-                2 => (split_by_hash[0], Some(String::from(split_by_hash[1]))),
-                _ => (rest, None),
+            if split_by_hash.len() == 2 {
+                (split_by_hash[0], Some(String::from(split_by_hash[1])))
+            } else {
+                (rest, None)
             }
         };
 
