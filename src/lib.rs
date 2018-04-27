@@ -22,11 +22,12 @@ pub mod git;
 pub mod transform;
 pub mod template;
 
+use failure::Error;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
-pub fn find_file_paths(base_path: &Path, filter: Regex) -> Box<Iterator<Item = PathBuf>> {
+pub fn find_file_paths(path: &Path, filter: Regex) -> Box<Iterator<Item = PathBuf>> {
     fn match_filter(entry: &DirEntry, filter: &Regex) -> bool {
         entry
             .file_name()
@@ -35,11 +36,11 @@ pub fn find_file_paths(base_path: &Path, filter: Regex) -> Box<Iterator<Item = P
             .unwrap_or(false)
     }
 
-    println!("Finding Files: {:?}", base_path);
+    println!("Finding Files: {:?}", path);
     println!("regex: /{}/", filter);
 
     Box::new(
-        WalkDir::new(base_path)
+        WalkDir::new(path)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())

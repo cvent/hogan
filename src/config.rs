@@ -56,7 +56,7 @@ impl ConfigDir {
         if let &Ok(ref config_dir) = &config_dir {
             if !config_dir.directory().is_dir() {
                 bail!(
-                    "{:?} is either not a directory or does not exist. It needs to be both",
+                    "{:?} either does not exist or is not a directory. It needs to be both",
                     config_dir.directory()
                 )
             }

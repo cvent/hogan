@@ -16,7 +16,7 @@ extern crate structopt;
 
 use failure::Error;
 use hogan::config::ConfigDir;
-use hogan::template::{self, Template};
+use hogan::template::{Template, TemplateDir};
 use regex::{Regex, RegexBuilder};
 use rouille::Response;
 use rouille::input::plain_text_body;
@@ -114,17 +114,17 @@ main!(|args: App, log_level: verbosity| match args.cmd {
     } => {
         let mut handlebars = hogan::transform::handlebars();
 
-        let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
-
-        let environments = config_dir.find(App::config_regex(&environments_regex)?);
-        println!("Loaded {} config file(s)", environments.len());
-
-        let templates = template::find(&templates_path, templates_regex);
+        let template_dir = TemplateDir::new(templates_path)?;
+        let templates = template_dir.find(templates_regex);
         println!("Loaded {} template file(s)", templates.len());
 
         for template in &templates {
             handlebars.register_template_file(&template.path.to_string_lossy(), &template.path)?;
         }
+
+        let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
+        let environments = config_dir.find(App::config_regex(&environments_regex)?);
+        println!("Loaded {} config file(s)", environments.len());
 
         for environment in environments {
             println!("Updating templates for {}", environment.environment);

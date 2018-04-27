@@ -5,14 +5,31 @@ use handlebars::Handlebars;
 use regex::Regex;
 use std::fs::File;
 use std::io::{Cursor, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use zip::CompressionMethod::Stored;
 use zip::write::{FileOptions, ZipWriter};
 
-pub fn find(base_path: &Path, filter: Regex) -> Vec<Template<File>> {
-    find_file_paths(base_path, filter)
-        .filter_map(|path| Template::from_path_buf(path).ok())
-        .collect()
+pub struct TemplateDir {
+    directory: PathBuf,
+}
+
+impl TemplateDir {
+    pub fn new(path: PathBuf) -> Result<TemplateDir, Error> {
+        if !path.is_dir() {
+            bail!(
+                "{:?} either does not exist or is not a directory. It needs to be both",
+                path
+            )
+        } else {
+            Ok(TemplateDir { directory: path })
+        }
+    }
+
+    pub fn find(&self, filter: Regex) -> Vec<Template<File>> {
+        find_file_paths(&self.directory, filter)
+            .filter_map(|path| Template::from_path_buf(path).ok())
+            .collect()
+    }
 }
 
 pub struct Template<R: Read> {
@@ -87,8 +104,8 @@ mod tests {
 
     #[test]
     fn test_find_all_templates() {
-        let templates = find(
-            &PathBuf::from("tests/fixtures/Projects"),
+        let template_dir = TemplateDir::new(PathBuf::from("tests/fixtures/Projects")).unwrap();
+        let templates = template_dir.find(
             RegexBuilder::new("(.*\\.)?template(\\.Release|\\-liquibase|\\-quartz)?\\.([Cc]onfig|yaml|properties)$")
                 .case_insensitive(true)
                 .build()

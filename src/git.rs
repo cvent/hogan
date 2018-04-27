@@ -57,7 +57,7 @@ impl GitUrl {
         repo_builder.fetch_options(fetch_options);
 
         if let Some(ref branch) = self.branch {
-            println!("Setting branch to {}", branch);
+            debug!("Setting branch to {}", branch);
             repo_builder.branch(branch);
         }
 
