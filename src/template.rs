@@ -68,7 +68,7 @@ impl<R: Read> Template<R> {
                 rendered.path.file_name().unwrap().to_string_lossy(),
                 options,
             )?;
-            zip.write_all(&rendered.contents);
+            zip.write_all(&rendered.contents)?;
         }
 
         Ok(zip.finish()?.into_inner())

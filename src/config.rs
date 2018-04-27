@@ -1,93 +1,85 @@
 use failure::Error;
 use find_file_paths;
-use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
-use git2::build::RepoBuilder;
+use git2::Repository;
 use json_patch::merge;
 use regex::Regex;
 use serde_json::{self, Value};
-use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tempfile::{self, TempDir};
-use url::Url;
+use url::{ParseError, Url};
 use walkdir::WalkDir;
+use git;
 
 pub enum ConfigDir {
     File {
-        url: Url,
         directory: PathBuf,
     },
     Git {
-        url: Url,
         git_repo: Repository,
-        temp_dir: TempDir,
-        directory: PathBuf,
-    },
-    Http {
-        url: Url,
         temp_dir: TempDir,
         directory: PathBuf,
     },
 }
 
 impl ConfigDir {
-    pub fn try_from_url(url: Url, ssh_key_path: &Path) -> Result<ConfigDir, Error> {
-        if url.scheme() == "file" {
-            let directory = match url.to_file_path() {
-                Ok(path) => path,
-                Err(_) => {
-                    let cwd = env::current_dir()?;
-                    println!("CWD: {:?}", cwd);
+    pub fn new(src: String, ssh_key_path: &Path) -> Result<ConfigDir, Error> {
+        let config_dir = if src.contains(".git") {
+            let git_url = git::GitUrl::new(&src);
+            let temp_dir = tempfile::tempdir()?;
 
-                    let path = url.path();
-                    println!("Path: {}", path);
-                    cwd.join(&path[1..])
-                }
+            let git_repo = git_url.clone(temp_dir.path(), Some(ssh_key_path))?;
+
+            let directory = match git_repo.workdir() {
+                Some(workdir) => workdir.join(git_url.internal_path),
+                None => bail!("No working directory found for git repository"),
             };
 
-            Ok(ConfigDir::File { url, directory })
-        } else if url.path().contains(".git") {
-            let mut callbacks = RemoteCallbacks::new();
-            callbacks.credentials(|url, username_from_url, allowed_types| {
-                Cred::ssh_key(username_from_url.unwrap(), None, ssh_key_path, None)
-            });
-
-            let mut fetch_options = FetchOptions::new();
-            fetch_options.remote_callbacks(callbacks);
-
-            let temp_dir = tempfile::tempdir()?;
-            println!("Cloning to {:?}", temp_dir);
-            let git_repo = RepoBuilder::new()
-                .fetch_options(fetch_options)
-                .clone(url.as_str(), temp_dir.path())?;
-
-            let directory = git_repo.workdir().unwrap().to_path_buf();
-
             Ok(ConfigDir::Git {
-                url,
                 git_repo,
                 temp_dir,
                 directory,
             })
         } else {
-            bail!("Cannot get directory from {}", url);
+            match Url::parse(&src) {
+                Ok(url) => match url.scheme() {
+                    "file" => ConfigDir::new(src.replacen("file://", "", 1), ssh_key_path),
+                    scheme => bail!("URL scheme {} not yet supported", scheme),
+                },
+                Err(ParseError::RelativeUrlWithoutBase) => Ok(ConfigDir::File {
+                    directory: PathBuf::from(src),
+                }),
+                Err(e) => Err(e.into()),
+            }
+        };
+
+        if let &Ok(ref config_dir) = &config_dir {
+            if !config_dir.directory().is_dir() {
+                bail!(
+                    "{:?} is either not a directory or does not exist. It needs to be both",
+                    config_dir.directory()
+                )
+            }
         }
+
+        config_dir
     }
 
     pub fn directory(&self) -> &Path {
         match *self {
             ConfigDir::File { ref directory, .. } => directory,
             ConfigDir::Git { ref directory, .. } => directory,
-            ConfigDir::Http { ref directory, .. } => directory,
         }
     }
 
-    pub fn refresh(&self) {
+    // TODO: Implement being able to re-checkout a git repo
+    pub fn refresh(&self) -> &Self {
         match *self {
             ConfigDir::File { .. } => {}
-            ConfigDir::Git { ref git_repo, .. } => {}
-            ConfigDir::Http { ref url, .. } => {}
+            ConfigDir::Git { .. } => {}
         }
+
+        self
     }
 
     pub fn find(&self, filter: Regex) -> Vec<Environment> {
@@ -230,8 +222,10 @@ mod tests {
 
     #[test]
     fn test_find_all_configs() {
-        let config_url = Url::parse("file://./tests/fixtures/configs").unwrap();
-        let config_dir = ConfigDir::try_from_url(config_url, Path::new("")).unwrap();
+        let config_dir = ConfigDir::new(
+            String::from("file://./tests/fixtures/configs"),
+            Path::new(""),
+        ).unwrap();
         let environments = config_dir.find(
             RegexBuilder::new("config\\..+\\.json$")
                 .case_insensitive(true)
@@ -243,8 +237,10 @@ mod tests {
 
     #[test]
     fn test_find_subset_configs() {
-        let config_url = Url::parse("file://./tests/fixtures/configs").unwrap();
-        let config_dir = ConfigDir::try_from_url(config_url, Path::new("")).unwrap();
+        let config_dir = ConfigDir::new(
+            String::from("file://./tests/fixtures/configs"),
+            Path::new(""),
+        ).unwrap();
         let environments = config_dir.find(
             RegexBuilder::new(r#"config\.test\d?\.json"#)
                 .case_insensitive(true)
