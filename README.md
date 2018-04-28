@@ -26,9 +26,9 @@ You can run the tests via `cargo test`. The tests should always pass and all new
 Once you have installed hogan, you can execute it as `hogan`.
 Some of the arguments are described below:
 
- * `region`: Regex specifying which region(s) to update.
- * `rootDir`: The directory to use for both searching for template files (recursively) and generating configs.
- * `configDir`: The directory where hogan-config files can be found (These are config.region.json files)
+ * `environments-filter`: Regex specifying which environment(s) to update.
+ * `templates`: The directory to use for searching for template files (recursively).
+ * `configs`: The directory where hogan-formatted config files can be found (These are config.ENVIRONMENT.json files)
 
 ## Example
 
