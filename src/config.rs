@@ -1,71 +1,147 @@
-use serde_json::{self, Value};
-use json_patch::merge;
-use walkdir::WalkDir;
-use regex::Regex;
-
-use std::path::Path;
-use std::fs::File;
-
+use failure::Error;
 use find_file_paths;
+use git2::Repository;
+use json_patch::merge;
+use regex::Regex;
+use serde_json::{self, Value};
+use std::fs::File;
+use std::path::{Path, PathBuf};
+use tempfile::{self, TempDir};
+use url::{ParseError, Url};
+use walkdir::WalkDir;
+use git;
 
-pub fn environments(base_path: &Path, filter: Regex) -> Vec<Environment> {
-    fn find_env_type_data<'a>(types: &'a Vec<EnvironmentType>, name: &str) -> &'a Value {
-        types
-            .iter()
-            .find(|e| e.environment_type == name)
-            .map(|env| &env.config_data)
-            .unwrap_or(&Value::Null)
-    }
+pub enum ConfigDir {
+    File {
+        directory: PathBuf,
+    },
+    Git {
+        git_repo: Repository,
+        temp_dir: TempDir,
+        directory: PathBuf,
+    },
+}
 
-    let environment_types = environment_types(base_path).collect::<Vec<EnvironmentType>>();
-    let global = find_env_type_data(&environment_types, "global");
+impl ConfigDir {
+    pub fn new(src: String, ssh_key_path: &Path) -> Result<ConfigDir, Error> {
+        let config_dir = if src.contains(".git") {
+            let git_url = git::GitUrl::new(&src);
+            let temp_dir = tempfile::tempdir()?;
 
-    raw_environments(base_path, filter)
-        .map(|mut environment| {
-            let parent = if let Some(ref env_type_name) = environment.environment_type {
-                find_env_type_data(&environment_types, env_type_name)
-            } else {
-                &Value::Null
+            let git_repo = git_url.clone(temp_dir.path(), Some(ssh_key_path))?;
+
+            let directory = match git_repo.workdir() {
+                Some(workdir) => workdir.join(git_url.internal_path),
+                None => bail!("No working directory found for git repository"),
             };
 
-            let mut config_data = global.clone(); // Start with global
-            merge(&mut config_data, &parent); // Merge in an env type
-            merge(&mut config_data, &environment.config_data); // Merge with the actual config
+            Ok(ConfigDir::Git {
+                git_repo,
+                temp_dir,
+                directory,
+            })
+        } else {
+            match Url::parse(&src) {
+                Ok(url) => match url.scheme() {
+                    "file" => ConfigDir::new(src.replacen("file://", "", 1), ssh_key_path),
+                    scheme => bail!("URL scheme {} not yet supported", scheme),
+                },
+                Err(ParseError::RelativeUrlWithoutBase) => Ok(ConfigDir::File {
+                    directory: PathBuf::from(src),
+                }),
+                Err(e) => Err(e.into()),
+            }
+        };
 
-            environment.config_data = config_data;
-            environment
-        })
-        .collect()
-}
+        if let &Ok(ref config_dir) = &config_dir {
+            if !config_dir.directory().is_dir() {
+                bail!(
+                    "{:?} either does not exist or is not a directory. It needs to be both",
+                    config_dir.directory()
+                )
+            }
+        }
 
-fn raw_environments(base_path: &Path, filter: Regex) -> Box<Iterator<Item = Environment>> {
-    Box::new(
-        find_file_paths(base_path, filter)
-            .filter_map(|p| File::open(p).ok())
-            .filter_map(|f| serde_json::from_reader(f).ok())
-            .filter_map(|c: Config| c.as_environment()),
-    )
-}
+        config_dir
+    }
 
-fn environment_types(base_path: &Path) -> Box<Iterator<Item = EnvironmentType>> {
-    Box::new(
-        WalkDir::new(base_path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .filter_map(|e| {
-                let path = e.path();
-                let env_type = path.file_stem().unwrap().to_string_lossy().into_owned();
-                File::open(&path)
-                    .ok()
-                    .and_then(|f| serde_json::from_reader(f).ok())
-                    .and_then(|c: Config| c.as_environment_type())
-                    .and_then(|mut e| {
-                        e.environment_type = env_type;
-                        Some(e)
-                    })
-            }),
-    )
+    pub fn directory(&self) -> &Path {
+        match *self {
+            ConfigDir::File { ref directory, .. } => directory,
+            ConfigDir::Git { ref directory, .. } => directory,
+        }
+    }
+
+    // TODO: Implement being able to re-checkout a git repo
+    pub fn refresh(&self) -> &Self {
+        match *self {
+            ConfigDir::File { .. } => {}
+            ConfigDir::Git { .. } => {}
+        }
+
+        self
+    }
+
+    pub fn find(&self, filter: Regex) -> Vec<Environment> {
+        fn find_env_type_data<'a>(types: &'a Vec<EnvironmentType>, name: &str) -> &'a Value {
+            types
+                .iter()
+                .find(|e| e.environment_type == name)
+                .map(|env| &env.config_data)
+                .unwrap_or(&Value::Null)
+        }
+
+        let environment_types =
+            ConfigDir::find_environment_types(self).collect::<Vec<EnvironmentType>>();
+        let global = find_env_type_data(&environment_types, "global");
+
+        ConfigDir::find_environments(self, filter)
+            .map(|mut environment| {
+                let parent = if let Some(ref env_type_name) = environment.environment_type {
+                    find_env_type_data(&environment_types, env_type_name)
+                } else {
+                    &Value::Null
+                };
+
+                let mut config_data = global.clone(); // Start with global
+                merge(&mut config_data, &parent); // Merge in an env type
+                merge(&mut config_data, &environment.config_data); // Merge with the actual config
+
+                environment.config_data = config_data;
+                environment
+            })
+            .collect()
+    }
+
+    fn find_environments(&self, filter: Regex) -> Box<Iterator<Item = Environment>> {
+        Box::new(
+            find_file_paths(self.directory(), filter)
+                .filter_map(|p| File::open(p).ok())
+                .filter_map(|f| serde_json::from_reader(f).ok())
+                .filter_map(|c: Config| c.as_environment()),
+        )
+    }
+
+    fn find_environment_types(&self) -> Box<Iterator<Item = EnvironmentType>> {
+        Box::new(
+            WalkDir::new(self.directory())
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+                .filter_map(|e| {
+                    let path = e.path();
+                    let env_type = path.file_stem().unwrap().to_string_lossy().into_owned();
+                    File::open(&path)
+                        .ok()
+                        .and_then(|f| serde_json::from_reader(f).ok())
+                        .and_then(|c: Config| c.as_environment_type())
+                        .and_then(|mut e| {
+                            e.environment_type = env_type;
+                            Some(e)
+                        })
+                }),
+        )
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,7 +167,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Environment {
     pub environment: String,
@@ -146,8 +222,11 @@ mod tests {
 
     #[test]
     fn test_find_all_configs() {
-        let environments = environments(
-            Path::new("tests/fixtures/configs"),
+        let config_dir = ConfigDir::new(
+            String::from("file://./tests/fixtures/configs"),
+            Path::new(""),
+        ).unwrap();
+        let environments = config_dir.find(
             RegexBuilder::new("config\\..+\\.json$")
                 .case_insensitive(true)
                 .build()
@@ -158,8 +237,11 @@ mod tests {
 
     #[test]
     fn test_find_subset_configs() {
-        let environments = environments(
-            Path::new("tests/fixtures/configs"),
+        let config_dir = ConfigDir::new(
+            String::from("file://./tests/fixtures/configs"),
+            Path::new(""),
+        ).unwrap();
+        let environments = config_dir.find(
             RegexBuilder::new(r#"config\.test\d?\.json"#)
                 .case_insensitive(true)
                 .build()

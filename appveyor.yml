@@ -13,9 +13,10 @@ environment:
   # TODO These are all the build jobs. Adjust as necessary. Comment out what you
   # don't need
   matrix:
+    # These fail to build curl-sys
     # MinGW
-    - TARGET: i686-pc-windows-gnu
-    - TARGET: x86_64-pc-windows-gnu
+    #- TARGET: i686-pc-windows-gnu
+    #- TARGET: x86_64-pc-windows-gnu
 
     # MSVC
     - TARGET: i686-pc-windows-msvc
