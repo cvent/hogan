@@ -33,7 +33,7 @@ Some of the arguments are described below:
 ## Example
 
 ```
-    hogan --region REGION --rootDir ./ --configDir ./Configs
+    hogan --environments-filter ENVIRONMENT --templates . --configs ./Configs
 ```
 
 ## Custom handlers in config files
