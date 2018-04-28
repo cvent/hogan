@@ -48,7 +48,7 @@ enum AppCommand {
         common: AppCommon,
 
         /// Filter environments to render templates for
-        #[structopt(long = "environments-filter", parse(try_from_str = "App::parse_regex"),
+        #[structopt(short = "e", long = "environments-filter", parse(try_from_str = "App::parse_regex"),
                     default_value = ".+", value_name = "REGEX")]
         environments_regex: Regex,
 
@@ -58,7 +58,7 @@ enum AppCommand {
         templates_path: PathBuf,
 
         /// Filter templates to transform
-        #[structopt(long = "templates-filter", parse(try_from_str = "App::parse_regex"),
+        #[structopt(short = "f", long = "templates-filter", parse(try_from_str = "App::parse_regex"),
                     default_value = "template([-.].+)?\\.(config|ya?ml|properties)",
                     value_name = "REGEX")]
         templates_regex: Regex,
