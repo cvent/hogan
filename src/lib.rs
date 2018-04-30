@@ -22,7 +22,6 @@ pub mod git;
 pub mod transform;
 pub mod template;
 
-use failure::Error;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};

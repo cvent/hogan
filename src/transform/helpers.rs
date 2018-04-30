@@ -189,7 +189,10 @@ pub(crate) fn url_rm_path(h: &Helper, _: &Handlebars, rc: &mut RenderContext) ->
 
                     Ok(())
                 }
-                _ => Err(RenderError::new(format!("Param is not URL: {:?}", value))),
+                _ => {
+                    rc.writer.write(s.as_bytes())?;
+                    Ok(())
+                }
             }
         }
         Json::Null => Ok(()),
@@ -334,6 +337,18 @@ mod test {
         for (template, expected) in templates {
             test_against_configs(&handlebars, template, expected)
         }
+    }
+
+    #[test]
+    fn test_double_url_rm_path() {
+        let mut handlebars = Handlebars::new();
+        handlebars.register_helper("url-rm-path", Box::new(url_rm_path));
+
+        test_against_configs(
+            &handlebars,
+            "{{url-rm-path (url-rm-path PathService.trailingSlash)}}",
+            "https://trailing-path.com",
+        );
     }
 
     #[test]
