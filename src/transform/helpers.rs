@@ -61,15 +61,56 @@ pub(crate) fn equal_helper(h: &Helper, r: &Handlebars, rc: &mut RenderContext) -
         .ok_or_else(|| RenderError::new("Right param not found for helper \"equal\""))?
         .value();
 
-    let template = if lvalue == rvalue {
-        h.template()
-    } else {
-        h.inverse()
-    };
+    let comparison = lvalue == rvalue;
 
-    match template {
-        Some(ref t) => t.render(r, rc),
-        None => Ok(()),
+    if h.is_block() {
+        let template = if comparison {
+            h.template()
+        } else {
+            h.inverse()
+        };
+
+        match template {
+            Some(ref t) => t.render(r, rc),
+            None => Ok(()),
+        }
+    } else {
+        if comparison {
+            rc.writer.write(comparison.to_string().as_bytes())?;
+        }
+
+        Ok(())
+    }
+}
+
+pub(crate) fn or_helper(h: &Helper, r: &Handlebars, rc: &mut RenderContext) -> HelperResult {
+    let lvalue = h.param(0)
+        .ok_or_else(|| RenderError::new("Left param not found for helper \"or\""))?
+        .value();
+    let rvalue = h.param(1)
+        .ok_or_else(|| RenderError::new("Right param not found for helper \"or\""))?
+        .value();
+
+    let comparison = lvalue.as_str().map_or(false, |v| v.len() > 0)
+        || rvalue.as_str().map_or(false, |v| v.len() > 0);
+
+    if h.is_block() {
+        let template = if comparison {
+            h.template()
+        } else {
+            h.inverse()
+        };
+
+        match template {
+            Some(ref t) => t.render(r, rc),
+            None => Ok(()),
+        }
+    } else {
+        if comparison {
+            rc.writer.write(comparison.to_string().as_bytes())?;
+        }
+
+        Ok(())
     }
 }
 
@@ -262,10 +303,50 @@ mod test {
     fn test_equal() {
         let mut handlebars = Handlebars::new();
         handlebars.register_helper("equal", Box::new(equal_helper));
+        handlebars.register_helper("eq", Box::new(equal_helper));
 
         let templates = vec![
             (r#"{{#equal Region.Key "TEST"}}Foo{{/equal}}"#, "Foo"),
             (r#"{{#equal Region.Key null}}{{else}}Bar{{/equal}}"#, "Bar"),
+            (r#"{{#eq Region.Key "TEST"}}Foo{{/eq}}"#, "Foo"),
+            (r#"{{#eq Region.Key null}}{{else}}Bar{{/eq}}"#, "Bar"),
+            (r#"{{#if (equal Region.Key "TEST")}}Foo{{/if}}"#, "Foo"),
+            (
+                r#"{{#if (equal Region.Key null)}}{{else}}Bar{{/if}}"#,
+                "Bar",
+            ),
+            (r#"{{#if (eq Region.Key "TEST")}}Foo{{/if}}"#, "Foo"),
+            (r#"{{#if (eq Region.Key null)}}{{else}}Bar{{/if}}"#, "Bar"),
+        ];
+
+        for (template, expected) in templates {
+            test_against_configs(&handlebars, template, expected)
+        }
+    }
+
+    #[test]
+    fn test_or() {
+        let mut handlebars = Handlebars::new();
+        handlebars.register_helper("eq", Box::new(equal_helper));
+        handlebars.register_helper("or", Box::new(or_helper));
+
+        let templates = vec![
+            (
+                r#"{{#or (eq Region.Key "TEST") (eq Region.Key "TEST2")}}Foo{{/or}}"#,
+                "Foo",
+            ),
+            (
+                r#"{{#or (eq Region.Key null) (eq Region.Key "NO")}}{{else}}Bar{{/or}}"#,
+                "Bar",
+            ),
+            (
+                r#"{{#if (or (eq Region.Key "TEST") (eq Region.Key "TEST2"))}}Foo{{/if}}"#,
+                "Foo",
+            ),
+            (
+                r#"{{#if (or (eq Region.Key null) (eq Region.Key "NO"))}}{{else}}Bar{{/if}}"#,
+                "Bar",
+            ),
         ];
 
         for (template, expected) in templates {
@@ -358,4 +439,5 @@ mod test {
 
         test_against_configs(&handlebars, "{{lowercase UpperCaseString}}", "uppercase");
     }
+
 }
