@@ -71,7 +71,7 @@ let template = "{{#comma-list Memcache.Servers}}{{Endpoint}}:{{Port}}{{/comma-li
 let transformed = "192.168.1.100:1122,192.168.1.101:1122,192.168.1.102:1122";
 ```
 
-### `equal`
+### `equal`, `eq`
 Like `if`, but compares the two arguments provided for equality:
 
 ```rust,skt-helpers
@@ -84,6 +84,24 @@ let config = json!({
 
 // and a template of:
 let template = r#"{{#equal Region.Key "TEST"}}True{{else}}False{{/equal}}"#;
+
+// The helper will transform it into:
+let transformed = "True";
+```
+
+### `or`
+Logical OR two parameters:
+
+```rust,skt-helpers
+// Given a config of:
+let config = json!({
+  "Region": {
+    "Key": "TEST"
+  }
+});
+
+// and a template of:
+let template = r#"{{#or (eq Region.Key "TEST") (eq Region.Key "TEST2")}}True{{else}}False{{/or}}"#;
 
 // The helper will transform it into:
 let transformed = "True";
