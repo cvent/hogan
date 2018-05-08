@@ -21,6 +21,7 @@ use regex::{Regex, RegexBuilder};
 use rouille::Response;
 use rouille::input::plain_text_body;
 use std::fs::File;
+use std::io::Write;
 use std::mem::replace;
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -48,8 +49,9 @@ enum AppCommand {
         common: AppCommon,
 
         /// Filter environments to render templates for
-        #[structopt(short = "e", long = "environments-filter", parse(try_from_str = "App::parse_regex"),
-                    default_value = ".+", value_name = "REGEX")]
+        #[structopt(short = "e", long = "environments-filter",
+                    parse(try_from_str = "App::parse_regex"), default_value = ".+",
+                    value_name = "REGEX")]
         environments_regex: Regex,
 
         /// Template source (recursive)
@@ -58,7 +60,8 @@ enum AppCommand {
         templates_path: PathBuf,
 
         /// Filter templates to transform
-        #[structopt(short = "f", long = "templates-filter", parse(try_from_str = "App::parse_regex"),
+        #[structopt(short = "f", long = "templates-filter",
+                    parse(try_from_str = "App::parse_regex"),
                     default_value = "template([-.].+)?\\.(config|ya?ml|properties)",
                     value_name = "REGEX")]
         templates_regex: Regex,
@@ -86,6 +89,10 @@ struct AppCommon {
     #[structopt(short = "k", long = "ssh-key", parse(from_str = "App::parse_path_buf"),
                 default_value = "~/.ssh/id_rsa", value_name = "FILE")]
     ssh_key: PathBuf,
+
+    /// Throw errors if values do not exist in configs
+    #[structopt(short = "s", long = "strict")]
+    strict: bool,
 }
 
 impl App {
@@ -112,15 +119,11 @@ main!(|args: App, log_level: verbosity| match args.cmd {
         templates_regex,
         common,
     } => {
-        let mut handlebars = hogan::transform::handlebars();
+        let mut handlebars = hogan::transform::handlebars(common.strict);
 
         let template_dir = TemplateDir::new(templates_path)?;
-        let templates = template_dir.find(templates_regex);
+        let mut templates = template_dir.find(templates_regex);
         println!("Loaded {} template file(s)", templates.len());
-
-        for template in &templates {
-            handlebars.register_template_file(&template.path.to_string_lossy(), &template.path)?;
-        }
 
         let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
         let environments = config_dir.find(App::config_regex(&environments_regex)?);
@@ -129,22 +132,18 @@ main!(|args: App, log_level: verbosity| match args.cmd {
         for environment in environments {
             println!("Updating templates for {}", environment.environment);
 
-            for template in &templates {
-                let template_path = template.path.to_string_lossy();
-                let path = template_path.replace("template", &environment.environment);
-                let mut file = File::create(&path)?;
+            for mut template in &mut templates {
+                debug!("Transforming {:?}", template.path);
 
-                debug!("Transforming {}", path);
-                if let Err(e) =
-                    handlebars.render_to_write(&template_path, &environment.config_data, &mut file)
-                {
-                    bail!("Error transforming {} due to {}", &path, e);
+                let rendered = template.render(&handlebars, &environment)?;
+                if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents) {
+                    bail!("Error transforming {:?} due to {}", rendered.path, e);
                 }
             }
         }
     }
     AppCommand::Server { common, port } => {
-        let mut handlebars = hogan::transform::handlebars();
+        let mut handlebars = hogan::transform::handlebars(common.strict);
 
         let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
