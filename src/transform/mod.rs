@@ -2,8 +2,9 @@ use handlebars::Handlebars;
 
 pub mod helpers;
 
-pub fn handlebars() -> Handlebars {
+pub fn handlebars(strict: bool) -> Handlebars {
     let mut handlebars = Handlebars::new();
+    handlebars.set_strict_mode(strict);
     handlebars.register_helper("comma-list", Box::new(helpers::comma_delimited_list_helper));
     handlebars.register_helper("equal", Box::new(helpers::equal_helper));
     handlebars.register_helper("eq", Box::new(helpers::equal_helper));

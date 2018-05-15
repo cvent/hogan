@@ -2,7 +2,6 @@
 name = "hogan"
 version = "0.2.2"
 authors = ["Jonathan Morley <jmorley@cvent.com>"]
-build = "build.rs"
 
 [[bin]]
 name = "hogan"
@@ -28,9 +27,3 @@ tempfile = "3.0"
 url = "1.7"
 walkdir = "2.0"
 zip = "0.3.2"
-
-[build-dependencies]
-skeptic = "0.13"
-
-[dev-dependencies]
-skeptic = "0.13"
