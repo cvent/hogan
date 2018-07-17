@@ -30,3 +30,4 @@ zip = "0.4"
 
 [dev-dependencies]
 assert_cli = "0.5.4"
+dir-diff = "0.3.1"

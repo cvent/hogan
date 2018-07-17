@@ -20,6 +20,7 @@ use regex::{Regex, RegexBuilder};
 use rouille::input::plain_text_body;
 use rouille::Response;
 use std::fs::File;
+use std::io::Read;
 use std::io::Write;
 use std::mem::replace;
 use std::ops::DerefMut;
@@ -170,6 +171,7 @@ fn main() -> Result<(), Error> {
                     debug!("Transforming {:?}", template.path);
 
                     let rendered = template.render(&handlebars, &environment)?;
+                    trace!("Rendered: {:?}", rendered.contents);
                     if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents) {
                         bail!("Error transforming {:?} due to {}", rendered.path, e);
                     }
@@ -203,16 +205,23 @@ fn main() -> Result<(), Error> {
                         match environments.read() {
                             Ok(environments) => {
                                 match request.data() {
-                                    Some(data) => match request.get_param("filename") {
+                                    Some(mut data) => match request.get_param("filename") {
                                         Some(filename) => {
-                                            let mut template = Template {
-                                                path: PathBuf::from(filename),
-                                                read: data,
-                                            };
+                                            let mut buffer = String::new();
 
-                                            match template.render_to_zip(&handlebars, &environments) {
-                                                Ok(zip) => Response::from_data("application/octet-stream", zip),
-                                                Err(e) => Response::text(format!("{}", e)).with_status_code(500)
+                                            match data.read_to_string(&mut buffer) {
+                                                Ok(_) => {
+                                                    let template = Template {
+                                                        path: PathBuf::from(filename),
+                                                        contents: buffer,
+                                                    };
+
+                                                    match template.render_to_zip(&handlebars, &environments) {
+                                                        Ok(zip) => Response::from_data("application/octet-stream", zip),
+                                                        Err(e) => Response::text(format!("{}", e)).with_status_code(500)
+                                                    }
+                                                },
+                                                Err(_) => Response::text("Cannot read body").with_status_code(400)
                                             }
                                         },
                                         None => Response::text("Query parameter 'filename' required").with_status_code(400)
@@ -263,6 +272,9 @@ fn main() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     extern crate assert_cli;
+    extern crate dir_diff;
+
+    use std::path::Path;
 
     #[test]
     fn test_transform() {
@@ -272,19 +284,42 @@ mod tests {
                 "--configs",
                 "tests/fixtures/configs",
                 "--templates",
-                "tests/fixtures/Projects",
+                "tests/fixtures/projects/templates",
             ])
             .stdout()
-            .is(r#"Finding Files: "tests/fixtures/Projects"
-regex: /template([-.].+)?\.(config|ya?ml|properties)/
-Loaded 3 template file(s)
-Finding Files: "tests/fixtures/configs"
-regex: /config\..+\.json$/
-Loaded 4 config file(s)
-Updating templates for EMPTY
-Updating templates for ENVTYPE
-Updating templates for TEST
-Updating templates for TEST2"#)
+            .contains(r#"Finding Files: "tests/fixtures/projects/templates"#)
+            .stdout()
+            .contains(r"regex: /template([-.].+)?\.(config|ya?ml|properties)/")
+            .stdout()
+            .contains("Loaded 3 template file(s)")
+            .stdout()
+            .contains(r#"Finding Files: "tests/fixtures/configs""#)
+            .stdout()
+            .contains(r#"regex: /config\..+\.json$/"#)
+            .stdout()
+            .contains("Loaded 4 config file(s)")
+            .stdout()
+            .contains("Updating templates for EMPTY")
+            .stdout()
+            .contains("Updating templates for ENVTYPE")
+            .stdout()
+            .contains("Updating templates for TEST")
+            .stdout()
+            .contains("Updating templates for TEST2")
             .unwrap();
+
+        assert!(
+            !dir_diff::is_different(
+                &Path::new("tests/fixtures/projects/templates/project-1"),
+                &Path::new("tests/fixtures/projects/rendered/project-1")
+            ).unwrap()
+        );
+
+        assert!(
+            !dir_diff::is_different(
+                &Path::new("tests/fixtures/projects/templates/project-2"),
+                &Path::new("tests/fixtures/projects/rendered/project-2")
+            ).unwrap()
+        );
     }
 }
