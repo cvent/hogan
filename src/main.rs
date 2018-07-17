@@ -278,7 +278,6 @@ mod tests {
 
     use self::fs_extra::dir;
 
-    use std::fs;
     use std::path::Path;
 
     #[test]
@@ -325,14 +324,14 @@ mod tests {
 
         assert!(
             !dir_diff::is_different(
-                &templates_path.join(Path::new("project-1")),
+                &templates_path.join("project-1"),
                 &Path::new("tests/fixtures/projects/rendered/project-1")
             ).unwrap()
         );
 
         assert!(
             !dir_diff::is_different(
-                &templates_path.join(Path::new("project-2")),
+                &templates_path.join("project-2"),
                 &Path::new("tests/fixtures/projects/rendered/project-2")
             ).unwrap()
         );
