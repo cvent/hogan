@@ -273,21 +273,36 @@ fn main() -> Result<(), Error> {
 mod tests {
     extern crate assert_cli;
     extern crate dir_diff;
+    extern crate fs_extra;
+    extern crate tempfile;
 
+    use self::fs_extra::dir;
+
+    use std::fs;
     use std::path::Path;
 
     #[test]
     fn test_transform() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        fs_extra::copy_items(
+            &vec!["tests/fixtures/projects/templates"],
+            temp_dir.path(),
+            &dir::CopyOptions::new(),
+        ).unwrap();
+
+        let templates_path = temp_dir.path().join("templates");
+
         assert_cli::Assert::main_binary()
             .with_args(&[
                 "transform",
                 "--configs",
                 "tests/fixtures/configs",
                 "--templates",
-                "tests/fixtures/projects/templates",
+                templates_path.to_str().unwrap(),
             ])
             .stdout()
-            .contains(r#"Finding Files: "tests/fixtures/projects/templates"#)
+            .contains(format!(r#"Finding Files: {:?}"#, templates_path))
             .stdout()
             .contains(r"regex: /template([-.].+)?\.(config|ya?ml|properties)/")
             .stdout()
@@ -310,14 +325,14 @@ mod tests {
 
         assert!(
             !dir_diff::is_different(
-                &Path::new("tests/fixtures/projects/templates/project-1"),
+                &templates_path.join(Path::new("project-1")),
                 &Path::new("tests/fixtures/projects/rendered/project-1")
             ).unwrap()
         );
 
         assert!(
             !dir_diff::is_different(
-                &Path::new("tests/fixtures/projects/templates/project-2"),
+                &templates_path.join(Path::new("project-2")),
                 &Path::new("tests/fixtures/projects/rendered/project-2")
             ).unwrap()
         );

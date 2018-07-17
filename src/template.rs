@@ -70,7 +70,7 @@ impl Template {
     }
 
     pub fn render_to_zip(
-        self,
+        &self,
         handlebars: &Handlebars,
         environments: &Vec<Environment>,
     ) -> Result<Vec<u8>, Error> {
