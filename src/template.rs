@@ -8,8 +8,7 @@ use zip::CompressionMethod::Stored;
 
 use std::clone::Clone;
 use std::fs;
-use std::fs::File;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::path::PathBuf;
 
 pub struct TemplateDir {
