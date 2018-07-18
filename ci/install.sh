@@ -11,7 +11,7 @@ main() {
     fi
 
     if [[ "${TRAVIS_OS_NAME}" == "linux" ]]; then
-      apt-get install zlib1g-dev
+      docker build -t x86_64-unknown-linux-musl ci/x86_64-unknown-linux-musl
     fi
 
     # Builds for iOS are done on OSX, but require the specific target to be
