@@ -10,6 +10,10 @@ main() {
         sort=gsort  # for `sort --sort-version`, from brew's coreutils.
     fi
 
+    if [[ "${TRAVIS_OS_NAME}" == "linux" ]]; then
+      apt-get install zlib1g-dev
+    fi
+
     # Builds for iOS are done on OSX, but require the specific target to be
     # installed.
     case $TARGET in

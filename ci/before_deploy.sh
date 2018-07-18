@@ -17,10 +17,6 @@ main() {
 
     test -f Cargo.lock || cargo generate-lockfile
 
-    if [[ "${TRAVIS_OS_NAME}" == "linux" ]]; then
-      apt-get install zlib1g-dev
-    fi
-
     # TODO Update this to build the artifacts that matter to you
     cross rustc --bin hogan --target $TARGET --release -- -C lto
 
