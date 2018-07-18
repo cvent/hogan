@@ -19,8 +19,8 @@ environment:
     - TARGET: x86_64-pc-windows-gnu
 
     # MSVC
-    - TARGET: i686-pc-windows-msvc
-    - TARGET: x86_64-pc-windows-msvc
+    ##- TARGET: i686-pc-windows-msvc
+    ##- TARGET: x86_64-pc-windows-msvc
 
     # Testing other channels
     # This causes issues sometimes, disabling to increase stability
@@ -33,8 +33,10 @@ install:
   - ps: >-
       If ($Env:TARGET -eq 'x86_64-pc-windows-gnu') {
         $Env:PATH += ';C:\msys64\mingw64\bin'
+        ls 'C:\msys64\mingw64\bin'
       } ElseIf ($Env:TARGET -eq 'i686-pc-windows-gnu') {
         $Env:PATH += ';C:\msys64\mingw32\bin'
+        ls 'C:\msys64\mingw32\bin'
       }
   - curl -sSf -o rustup-init.exe https://win.rustup.rs/
   - rustup-init.exe -y --default-host %TARGET% --default-toolchain %RUST_VERSION%
