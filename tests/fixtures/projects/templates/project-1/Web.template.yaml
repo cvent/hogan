@@ -1,0 +1,8 @@
+Database:
+  Endpoint: {{yaml-string DB.Endpoint}}
+remove-slash: {{url-rm-slash SlashService.endpoint}}
+add-slash: {{url-add-slash NonSlashService.endpoint}}
+no-slash: {{url-add-slash NonSlashService.notAnEndpoint}}
+remove-path: {{url-rm-path PathService.endpoint}}
+trailing-slash-remove-path: {{url-rm-path PathService.trailingSlash}}
+lowercase: {{lowercase UpperCaseString}}

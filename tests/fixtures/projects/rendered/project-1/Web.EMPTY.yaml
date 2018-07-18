@@ -1,0 +1,8 @@
+Database:
+  Endpoint: host-name\\TEST\"
+remove-slash: https://slash.com
+add-slash: https://nonslash.com/
+no-slash: no-protocol.no-slash.com
+remove-path: https://path.com/path
+trailing-slash-remove-path: https://trailing-path.com/path
+lowercase: uppercase

@@ -3,11 +3,13 @@ use failure::Error;
 use find_file_paths;
 use handlebars::Handlebars;
 use regex::Regex;
-use std::fs::File;
-use std::io::{Cursor, Read, Write};
-use std::path::PathBuf;
-use zip::CompressionMethod::Stored;
 use zip::write::{FileOptions, ZipWriter};
+use zip::CompressionMethod::Stored;
+
+use std::clone::Clone;
+use std::fs;
+use std::io::{Cursor, Write};
+use std::path::PathBuf;
 
 pub struct TemplateDir {
     directory: PathBuf,
@@ -25,42 +27,38 @@ impl TemplateDir {
         }
     }
 
-    pub fn find(&self, filter: Regex) -> Vec<Template<File>> {
+    pub fn find(&self, filter: Regex) -> Vec<Template> {
         find_file_paths(&self.directory, filter)
             .filter_map(|path| Template::from_path_buf(path).ok())
             .collect()
     }
 }
 
-pub struct Template<R: Read> {
+pub struct Template {
     pub path: PathBuf,
-    pub read: R,
+    pub contents: String,
 }
 
-impl Template<File> {
-    fn from_path_buf(path: PathBuf) -> Result<Template<File>, Error> {
+impl Template {
+    fn from_path_buf(path: PathBuf) -> Result<Template, Error> {
         Ok(Template {
             path: path.clone(),
-            read: File::open(path)?,
+            contents: fs::read_to_string(path)?,
         })
     }
 }
 
-impl<R: Read> Template<R> {
+impl Template {
     pub fn render(
-        &mut self,
+        &self,
         handlebars: &Handlebars,
         environment: &Environment,
     ) -> Result<Rendered, Error> {
         let mut buf = Cursor::new(Vec::new());
-        handlebars.render_template_source_to_write(
-            &mut self.read,
-            &environment.config_data,
-            &mut buf,
-        )?;
+        handlebars.render_template_to_write(&self.contents, &environment.config_data, &mut buf)?;
 
         Ok(Rendered {
-            path: self.path.with_file_name(
+            path: self.path.clone().with_file_name(
                 self.path
                     .file_name()
                     .unwrap()
@@ -72,7 +70,7 @@ impl<R: Read> Template<R> {
     }
 
     pub fn render_to_zip(
-        &mut self,
+        &self,
         handlebars: &Handlebars,
         environments: &Vec<Environment>,
     ) -> Result<Vec<u8>, Error> {
@@ -104,7 +102,8 @@ mod tests {
 
     #[test]
     fn test_find_all_templates() {
-        let template_dir = TemplateDir::new(PathBuf::from("tests/fixtures/Projects")).unwrap();
+        let template_dir =
+            TemplateDir::new(PathBuf::from("tests/fixtures/projects/templates")).unwrap();
         let templates = template_dir.find(
             RegexBuilder::new("(.*\\.)?template(\\.Release|\\-liquibase|\\-quartz)?\\.([Cc]onfig|yaml|properties)$")
                 .case_insensitive(true)
