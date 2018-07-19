@@ -280,6 +280,7 @@ mod tests {
 
     use std::path::Path;
 
+    #[cfg(not(all(target_env = "msvc", target_arch = "x86_64")))]
     #[test]
     fn test_transform() {
         let temp_dir = tempfile::tempdir().unwrap();
