@@ -5,7 +5,7 @@
 
 ## Purpose
 
-The purpose of this project is to generate config overrides in XML so that we can keep a template up to date, and populate values on the fly with ease at build time.
+The purpose of this project is to generate config overrides so that we can keep a template up to date, and populate values on the fly with ease at build time.
 
 ## Installation
 
