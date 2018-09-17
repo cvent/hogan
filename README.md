@@ -17,6 +17,12 @@ Grab a binary for your OS from the [latest release](https://github.com/cvent/hog
 curl -LSfs https://japaric.github.io/trust/install.sh | sh -s -- --git cvent/hogan --target x86_64-apple-darwin --to /usr/local/bin
 ```
 
+You may also need a recent version of OpenSSL
+
+```sh
+brew install openssl@1.1
+```
+
 ## Tests
 
 You can run the tests via `cargo test`. The tests should always pass and all new behavior should be tested.
