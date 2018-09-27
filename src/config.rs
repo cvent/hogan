@@ -1,15 +1,88 @@
 use failure::Error;
 use find_file_paths;
+use git;
 use git2::Repository;
 use json_patch::merge;
 use regex::Regex;
 use serde_json::{self, Value};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::str::{self, FromStr};
 use tempfile::{self, TempDir};
 use url::{ParseError, Url};
 use walkdir::WalkDir;
-use git;
+
+#[derive(Debug, PartialEq)]
+pub enum ConfigUrl {
+    File {
+        path: PathBuf,
+    },
+    Git {
+        url: Url,
+        branch: Option<String>,
+        internal_path: PathBuf,
+    },
+}
+
+impl FromStr for ConfigUrl {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match Url::parse(&s) {
+            Ok(url) => {
+                if url.scheme() == "file" {
+                    Ok(ConfigUrl::File {
+                        path: PathBuf::from(s.trim_left_matches("file://")),
+                    })
+                } else {
+                    let mut path_segments = url
+                        .path_segments()
+                        .ok_or_else(|| format_err!("Url cannot be a base"))?
+                        .map(|segment| segment.to_owned())
+                        .collect::<Vec<String>>();
+
+                    match path_segments
+                        .iter()
+                        .position(|s| s.ends_with(".git"))
+                        .map(|index| index + 1)
+                    {
+                        Some(git_index) => {
+                            let mut git_url = url.clone();
+                            git_url.set_fragment(None);
+
+                            let internal_path = if git_index > path_segments.len() {
+                                PathBuf::new()
+                            } else {
+                                let (base_segments, rest) = path_segments.split_at(git_index);
+
+                                git_url
+                                    .path_segments_mut()
+                                    .map_err(|_| format_err!("Url cannot be a base"))?
+                                    .clear()
+                                    .extend(base_segments);
+
+                                rest.iter().collect()
+                            };
+
+                            Ok(ConfigUrl::Git {
+                                url: git_url,
+                                branch: url.fragment().map(|f| f.to_owned()),
+                                internal_path,
+                            })
+                        }
+                        None => bail!("Config Url not a file path, and not a .git URL"),
+                    }
+                }
+            }
+            Err(ParseError::RelativeUrlWithoutBase) => if s.contains(".git") {
+                format!("ssh://{}", str::replace(s, ":", "/"))
+            } else {
+                format!("file://{}", s)
+            }.parse(),
+            Err(e) => Err(e.into()),
+        }
+    }
+}
 
 pub enum ConfigDir {
     File {
@@ -23,34 +96,34 @@ pub enum ConfigDir {
 }
 
 impl ConfigDir {
-    pub fn new(src: String, ssh_key_path: &Path) -> Result<ConfigDir, Error> {
-        let config_dir = if src.contains(".git") {
-            let git_url = git::GitUrl::new(&src);
-            let temp_dir = tempfile::tempdir()?;
+    pub fn new(url: ConfigUrl, ssh_key_path: &Path) -> Result<ConfigDir, Error> {
+        let config_dir = match url {
+            ConfigUrl::Git {
+                url,
+                branch,
+                internal_path,
+            } => {
+                let temp_dir = tempfile::tempdir()?;
 
-            let git_repo = git_url.clone(temp_dir.path(), Some(ssh_key_path))?;
+                let git_repo = git::clone(
+                    url.as_str(),
+                    branch.as_ref().map(|x| &**x),
+                    temp_dir.path(),
+                    Some(ssh_key_path),
+                )?;
 
-            let directory = match git_repo.workdir() {
-                Some(workdir) => workdir.join(git_url.internal_path),
-                None => bail!("No working directory found for git repository"),
-            };
+                let directory = match git_repo.workdir() {
+                    Some(workdir) => workdir.join(internal_path),
+                    None => bail!("No working directory found for git repository"),
+                };
 
-            Ok(ConfigDir::Git {
-                git_repo,
-                temp_dir,
-                directory,
-            })
-        } else {
-            match Url::parse(&src) {
-                Ok(url) => match url.scheme() {
-                    "file" => ConfigDir::new(src.replacen("file://", "", 1), ssh_key_path),
-                    scheme => bail!("URL scheme {} not yet supported", scheme),
-                },
-                Err(ParseError::RelativeUrlWithoutBase) => Ok(ConfigDir::File {
-                    directory: PathBuf::from(src),
-                }),
-                Err(e) => Err(e.into()),
+                Ok(ConfigDir::Git {
+                    git_repo,
+                    temp_dir,
+                    directory,
+                })
             }
+            ConfigUrl::File { path } => Ok(ConfigDir::File { directory: path }),
         };
 
         if let &Ok(ref config_dir) = &config_dir {
@@ -109,8 +182,7 @@ impl ConfigDir {
 
                 environment.config_data = config_data;
                 environment
-            })
-            .collect()
+            }).collect()
     }
 
     fn find_environments(&self, filter: Regex) -> Box<Iterator<Item = Environment>> {
@@ -186,6 +258,148 @@ struct EnvironmentType {
 mod tests {
     use super::*;
     use regex::RegexBuilder;
+    use std::path::Path;
+
+    #[test]
+    fn test_github_url() {
+        assert_eq!(
+            "git@github.com:foo/bar.git".parse::<ConfigUrl>().unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("ssh://git@github.com/foo/bar.git").unwrap(),
+                branch: None,
+                internal_path: PathBuf::from(""),
+            }
+        );
+
+        assert_eq!(
+            "git@github.com:foo/bar.git/internal/path#branch"
+                .parse::<ConfigUrl>()
+                .unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("ssh://git@github.com/foo/bar.git").unwrap(),
+                branch: Some(String::from("branch")),
+                internal_path: PathBuf::from("internal/path"),
+            }
+        );
+
+        assert_eq!(
+            "https://github.com/foo/bar.git"
+                .parse::<ConfigUrl>()
+                .unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("https://github.com/foo/bar.git").unwrap(),
+                branch: None,
+                internal_path: PathBuf::from(""),
+            }
+        );
+
+        assert_eq!(
+            "https://github.com/foo/bar.git/internal/path#branch"
+                .parse::<ConfigUrl>()
+                .unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("https://github.com/foo/bar.git").unwrap(),
+                branch: Some(String::from("branch")),
+                internal_path: PathBuf::from("internal/path"),
+            }
+        );
+    }
+
+    #[test]
+    fn test_bitbucket_git_url() {
+        assert_eq!(
+            "ssh://git@bitbucket.org/foo/bar.git"
+                .parse::<ConfigUrl>()
+                .unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("ssh://git@bitbucket.org/foo/bar.git").unwrap(),
+                branch: None,
+                internal_path: PathBuf::from(""),
+            }
+        );
+
+        assert_eq!(
+            "ssh://git@bitbucket.org/foo/bar.git/internal/path#branch"
+                .parse::<ConfigUrl>()
+                .unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("ssh://git@bitbucket.org/foo/bar.git").unwrap(),
+                branch: Some(String::from("branch")),
+                internal_path: PathBuf::from("internal/path"),
+            }
+        );
+
+        assert_eq!(
+            "https://username@bitbucket.org/scm/foo/bar.git"
+                .parse::<ConfigUrl>()
+                .unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("https://username@bitbucket.org/scm/foo/bar.git").unwrap(),
+                branch: None,
+                internal_path: PathBuf::from(""),
+            }
+        );
+
+        assert_eq!(
+            "https://username@bitbucket.org/scm/foo/bar.git/internal/path#branch"
+                .parse::<ConfigUrl>()
+                .unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("https://username@bitbucket.org/scm/foo/bar.git").unwrap(),
+                branch: Some(String::from("branch")),
+                internal_path: PathBuf::from("internal/path"),
+            }
+        );
+    }
+
+    #[test]
+    fn test_local_path() {
+        assert_eq!(
+            "foo/bar/baz".parse::<ConfigUrl>().unwrap(),
+            ConfigUrl::File {
+                path: PathBuf::from("foo/bar/baz"),
+            }
+        );
+
+        assert_eq!(
+            "/foo/bar/baz".parse::<ConfigUrl>().unwrap(),
+            ConfigUrl::File {
+                path: PathBuf::from("/foo/bar/baz"),
+            }
+        );
+
+        assert_eq!(
+            "foo/bar.git".parse::<ConfigUrl>().unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("ssh://foo/bar.git").unwrap(),
+                branch: None,
+                internal_path: PathBuf::from("")
+            }
+        );
+
+        assert_eq!(
+            "foo/bar.git/baz".parse::<ConfigUrl>().unwrap(),
+            ConfigUrl::Git {
+                url: Url::parse("ssh://foo/bar.git").unwrap(),
+                branch: None,
+                internal_path: PathBuf::from("baz")
+            }
+        );
+
+        assert_eq!(
+            "file://foo/bar/baz".parse::<ConfigUrl>().unwrap(),
+            ConfigUrl::File {
+                path: PathBuf::from("foo/bar/baz"),
+            }
+        );
+
+        assert_eq!(
+            "file://foo/bar.git/baz".parse::<ConfigUrl>().unwrap(),
+            ConfigUrl::File {
+                path: PathBuf::from("foo/bar.git/baz"),
+            }
+        );
+    }
 
     #[test]
     fn test_basic_triple_merge() {
@@ -223,7 +437,7 @@ mod tests {
     #[test]
     fn test_find_all_configs() {
         let config_dir = ConfigDir::new(
-            String::from("file://./tests/fixtures/configs"),
+            "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
         ).unwrap();
         let environments = config_dir.find(
@@ -238,7 +452,7 @@ mod tests {
     #[test]
     fn test_find_subset_configs() {
         let config_dir = ConfigDir::new(
-            String::from("file://./tests/fixtures/configs"),
+            "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
         ).unwrap();
         let environments = config_dir.find(
