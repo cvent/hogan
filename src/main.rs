@@ -15,6 +15,7 @@ extern crate structopt;
 
 use failure::Error;
 use hogan::config::ConfigDir;
+use hogan::config::ConfigUrl;
 use hogan::template::{Template, TemplateDir};
 use regex::{Regex, RegexBuilder};
 use rouille::input::plain_text_body;
@@ -105,7 +106,7 @@ struct AppCommon {
     /// Config source. Accepts file and git URLs. Paths within a git repository may be appended
     /// to a git URL, and branches may be specified as a URL fragment (recursive if applicable)
     #[structopt(short = "c", long = "configs", value_name = "URL")]
-    configs_url: String,
+    configs_url: ConfigUrl,
 
     /// SSH key to use if configs URL requires authentication
     #[structopt(
@@ -271,14 +272,17 @@ fn main() -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    extern crate assert_cli;
+    extern crate assert_cmd;
     extern crate dir_diff;
     extern crate fs_extra;
+    extern crate predicates;
     extern crate tempfile;
 
+    use self::assert_cmd::prelude::*;
     use self::fs_extra::dir;
-
+    use self::predicates::prelude::*;
     use std::path::Path;
+    use std::process::Command;
 
     #[cfg(not(all(target_env = "msvc", target_arch = "x86_64")))]
     #[test]
@@ -293,35 +297,46 @@ mod tests {
 
         let templates_path = temp_dir.path().join("templates");
 
-        assert_cli::Assert::main_binary()
-            .with_args(&[
-                "transform",
-                "--configs",
-                "tests/fixtures/configs",
-                "--templates",
-                templates_path.to_str().unwrap(),
-            ])
-            .stdout()
-            .contains(format!(r#"Finding Files: {:?}"#, templates_path))
-            .stdout()
-            .contains(r"regex: /template([-.].+)?\.(config|ya?ml|properties)/")
-            .stdout()
-            .contains("Loaded 3 template file(s)")
-            .stdout()
-            .contains(r#"Finding Files: "tests/fixtures/configs""#)
-            .stdout()
-            .contains(r#"regex: /config\..+\.json$/"#)
-            .stdout()
-            .contains("Loaded 4 config file(s)")
-            .stdout()
-            .contains("Updating templates for EMPTY")
-            .stdout()
-            .contains("Updating templates for ENVTYPE")
-            .stdout()
-            .contains("Updating templates for TEST")
-            .stdout()
-            .contains("Updating templates for TEST2")
-            .unwrap();
+        let mut cmd = Command::main_binary().unwrap();
+
+        let cmd = cmd.args(&[
+            "transform",
+            "--configs",
+            "tests/fixtures/configs",
+            "--templates",
+            templates_path.to_str().unwrap(),
+        ]);
+
+        cmd.assert().success();
+
+        cmd.assert().stdout(
+            predicate::str::contains(format!(r#"Finding Files: {:?}"#, templates_path)).from_utf8(),
+        );
+
+        cmd.assert().stdout(
+            predicate::str::contains(r"regex: /template([-.].+)?\.(config|ya?ml|properties)/")
+                .from_utf8(),
+        );
+
+        cmd.assert()
+            .stdout(predicate::str::contains("Loaded 3 template file(s)").from_utf8());
+
+        cmd.assert().stdout(
+            predicate::str::contains(r#"Finding Files: "tests/fixtures/configs""#).from_utf8(),
+        );
+
+        cmd.assert()
+            .stdout(predicate::str::contains(r#"regex: /config\..+\.json$/"#).from_utf8());
+
+        cmd.assert()
+            .stdout(predicate::str::contains("Loaded 4 config file(s)").from_utf8());
+
+        for environment in ["EMPTY", "ENVTYPE", "TEST", "TEST2"].iter() {
+            cmd.assert().stdout(
+                predicate::str::contains(format!("Updating templates for {}", environment))
+                    .from_utf8(),
+            );
+        }
 
         assert!(
             !dir_diff::is_different(
