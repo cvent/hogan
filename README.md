@@ -23,6 +23,12 @@ You may also need a recent version of OpenSSL
 brew install openssl@1.1
 ```
 
+### Linux
+
+```sh
+curl -LSfs https://japaric.github.io/trust/install.sh | sh -s -- --git cvent/hogan --target x86_64-unknown-linux-gnu --to /usr/local/bin
+```
+
 ## Tests
 
 You can run the tests via `cargo test`. The tests should always pass and all new behavior should be tested.
