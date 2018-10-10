@@ -106,7 +106,7 @@ impl ConfigDir {
                 let temp_dir = tempfile::tempdir()?;
 
                 let git_repo = git::clone(
-                    url.as_str(),
+                    &url,
                     branch.as_ref().map(|x| &**x),
                     temp_dir.path(),
                     Some(ssh_key_path),

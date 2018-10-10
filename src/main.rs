@@ -187,6 +187,7 @@ fn main() -> Result<(), Error> {
             let mut environments = RwLock::new(config_dir.find(Regex::new(".+")?));
             let mut config_dir = Mutex::new(config_dir);
 
+            info!("Starting server on port {}", port);
             rouille::start_server(("0.0.0.0", port), move |request| {
                 router!(request,
                     (POST) (/refresh) => {

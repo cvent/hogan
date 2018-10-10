@@ -2,15 +2,23 @@ use failure::Error;
 use git2::build::RepoBuilder;
 use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
 use std::path::Path;
+use url::Url;
 
 pub fn clone(
-    url: &str,
+    url: &Url,
     branch: Option<&str>,
     path: &Path,
     ssh_key_path: Option<&Path>,
 ) -> Result<Repository, Error> {
     let mut callbacks = RemoteCallbacks::new();
-    if let Some(ssh_key_path) = ssh_key_path {
+
+    if let Some(password) = url.password() {
+        debug!("Using password auth");
+        callbacks.credentials(move |_url, username_from_url, _allowed_types| {
+            Cred::userpass_plaintext(username_from_url.unwrap(), password)
+        });
+    } else if let Some(ssh_key_path) = ssh_key_path {
+        debug!("Using SSH auth");
         callbacks.credentials(move |_url, username_from_url, _allowed_types| {
             Cred::ssh_key(username_from_url.unwrap(), None, ssh_key_path, None)
         });
@@ -28,5 +36,5 @@ pub fn clone(
     }
 
     info!("Cloning to {:?}", path);
-    repo_builder.clone(&url, path).map_err(|e| e.into())
+    repo_builder.clone(url.as_str(), path).map_err(|e| e.into())
 }
