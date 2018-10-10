@@ -34,7 +34,7 @@ RUN apk --update add ca-certificates
 
 # Create a new stage with a minimal image
 # because we already have a binary built
-FROM scratch
+FROM alpine:latest
 
 # Copies standard SSL certs from the "build" stage
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
