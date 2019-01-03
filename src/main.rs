@@ -20,7 +20,7 @@ use hogan::template::{Template, TemplateDir};
 use regex::{Regex, RegexBuilder};
 use rouille::input::plain_text_body;
 use rouille::Response;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
 use std::mem::replace;
@@ -173,7 +173,12 @@ fn main() -> Result<(), Error> {
 
                     let rendered = template.render(&handlebars, &environment)?;
                     trace!("Rendered: {:?}", rendered.contents);
-                    if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents) {
+
+                    if let Err(e) = OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&rendered.path)
+                        ?.write_all(&rendered.contents) {
                         bail!("Error transforming {:?} due to {}", rendered.path, e);
                     }
                 }
