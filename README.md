@@ -45,7 +45,7 @@ Some of the arguments are described below:
 ## Example
 
 ```
-    hogan --environments-filter ENVIRONMENT --templates . --configs ./Configs
+    hogan transform --environments-filter ENVIRONMENT --templates . --configs ./Configs
 ```
 
 ## Custom handlers in config files
