@@ -23,6 +23,7 @@ use rouille::Response;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
+use std::io::ErrorKind::AlreadyExists;
 use std::mem::replace;
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -174,12 +175,18 @@ fn main() -> Result<(), Error> {
                     let rendered = template.render(&handlebars, &environment)?;
                     trace!("Rendered: {:?}", rendered.contents);
 
-                    if let Err(e) = OpenOptions::new()
+                    if let Err(e) = match OpenOptions::new()
                         .write(true)
                         .create_new(true)
-                        .open(&rendered.path)
-                        ?.write_all(&rendered.contents) {
-                        bail!("Error transforming {:?} due to {}", rendered.path, e);
+                        .open(&rendered.path) {
+                            Ok(ref mut f) => f.write_all(&rendered.contents),
+                            Err(ref e) if e.kind() == AlreadyExists => {
+                                trace!("Skipping {:?} - config already exists.", rendered.path);
+                                Ok(())
+                            },
+                            Err(e) => Err(e)
+                    } {
+                        bail!("Error transforming {:?} due to {}", rendered.path, e)
                     }
                 }
             }
