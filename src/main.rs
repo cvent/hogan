@@ -308,8 +308,7 @@ mod tests {
     use self::predicates::prelude::*;
     use std::path::Path;
     use std::process::Command;
-    use std::io::{ Read, Error };
-    use std::fs::{ File };
+    use std::io::Write;
 
     #[cfg(not(all(target_env = "msvc", target_arch = "x86_64")))]
     #[test]
@@ -393,8 +392,15 @@ mod tests {
 
         let templates_path = temp_dir.path().join("templates");
 
-        let mut cmd = Command::main_binary().unwrap();
+        let ignore_path = templates_path.join("project-1/Web.EMPTY.config");
+        if let Ok(ref mut f) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&ignore_path) {
+                f.write_all(b"Hamburger.").expect("Failed to create test file for ignore.")
+            }
 
+        let mut cmd = Command::main_binary().unwrap();
         let cmd = cmd.args(&[
             "transform",
             "--configs",
@@ -407,23 +413,14 @@ mod tests {
         cmd.assert().success();
 
         // assert that running the command with the ignore flag
-        // did not change the file that were copied from templates directory
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-1"),
-                &Path::new("tests/fixtures/projects/templates/project-1")
-            ).unwrap()
-        );
+        // did not overwrite the manually created project-1/Web.EMPTY.config
+        let data2 = std::fs::read_to_string(&ignore_path)
+            .expect("Failed to read test file for ignore.");
+        assert!(data2 == "Hamburger.");
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-2"),
-                &Path::new("tests/fixtures/projects/templates/project-2")
-            ).unwrap()
-        );
-
-        // after running the command again without the ingore flag
+        // after running the command again without the ignore flag
         // assert that the configs now match those in the rendered directory
+        let mut cmd = Command::main_binary().unwrap();
         let cmd = cmd.args(&[
             "transform",
             "--configs",
@@ -431,6 +428,8 @@ mod tests {
             "--templates",
             templates_path.to_str().unwrap()
         ]);
+        cmd.assert().success();
+
         assert!(
             !dir_diff::is_different(
                 &templates_path.join("project-1"),
