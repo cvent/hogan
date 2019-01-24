@@ -14,13 +14,8 @@ Grab a binary for your OS from the [latest release](https://github.com/cvent/hog
 ### MacOS
 
 ```sh
-curl -LSfs https://japaric.github.io/trust/install.sh | sh -s -- --git cvent/hogan --target x86_64-apple-darwin --to /usr/local/bin
-```
-
-You may also need a recent version of OpenSSL
-
-```sh
-brew install openssl@1.1
+brew tap cvent/tap
+brew install hogan
 ```
 
 ### Linux
