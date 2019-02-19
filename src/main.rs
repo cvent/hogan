@@ -81,7 +81,7 @@ enum AppCommand {
             short = "f",
             long = "templates-filter",
             parse(try_from_str = "App::parse_regex"),
-            default_value = "^[^.]*(\w+\.)*template([-.].+)?\.(config|ya?ml|properties)",
+            default_value = "^[^.]*(\\w+\\.)*template([-.].+)?\\.(config|ya?ml|properties)",
             value_name = "REGEX"
         )]
         templates_regex: Regex,
