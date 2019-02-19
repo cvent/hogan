@@ -81,7 +81,7 @@ enum AppCommand {
             short = "f",
             long = "templates-filter",
             parse(try_from_str = "App::parse_regex"),
-            default_value = "^[^.].*template([-.].+)?\\.(config|ya?ml|properties)",
+            default_value = "^[^.]*(\w+\.)*template([-.].+)?\.(config|ya?ml|properties)",
             value_name = "REGEX"
         )]
         templates_regex: Regex,
@@ -341,7 +341,7 @@ mod tests {
         );
 
         cmd.assert().stdout(
-           predicate::str::contains(r"regex: /^[^.].*template([-.].+)?\.(config|ya?ml|properties)/")
+           predicate::str::contains(r"regex: /^[^.]*(\w+\.)*template([-.].+)?\.(config|ya?ml|properties)/")
                .from_utf8(),
         );
 
