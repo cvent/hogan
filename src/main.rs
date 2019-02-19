@@ -346,7 +346,7 @@ mod tests {
         );
 
         cmd.assert()
-            .stdout(predicate::str::contains("Loaded 3 template file(s)").from_utf8());
+            .stdout(predicate::str::contains("Loaded 6 template file(s)").from_utf8());
 
         cmd.assert().stdout(
             predicate::str::contains(r#"Finding Files: "tests/fixtures/configs""#).from_utf8(),
