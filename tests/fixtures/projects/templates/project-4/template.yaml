@@ -1,0 +1,1 @@
+#testing that templates starting with `template` and ending with `.yaml` get picked up by the regex
