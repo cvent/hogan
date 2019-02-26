@@ -1,6 +1,6 @@
 [package]
 name = "hogan"
-version = "0.2.9"
+version = "0.2.10"
 authors = ["Jonathan Morley <jmorley@cvent.com>"]
 
 [[bin]]
