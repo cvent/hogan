@@ -105,11 +105,11 @@ mod tests {
         let template_dir =
             TemplateDir::new(PathBuf::from("tests/fixtures/projects/templates")).unwrap();
         let templates = template_dir.find(
-            RegexBuilder::new("(.*\\.)?template(\\.Release|\\-liquibase|\\-quartz)?\\.([Cc]onfig|yaml|properties)$")
+            RegexBuilder::new("^[^.]*(\\w+\\.)*template([-.].+)?\\.(config|ya?ml|properties)$")
                 .case_insensitive(true)
                 .build()
                 .unwrap(),
         );
-        assert_eq!(templates.len(), 3)
+        assert_eq!(templates.len(), 6)
     }
 }
