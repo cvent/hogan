@@ -43,6 +43,16 @@ Some of the arguments are described below:
     hogan transform --environments-filter ENVIRONMENT --templates . --configs ./Configs
 ```
 
+You can also create an alias of the above command and add to bash_profile
+```
+    alias hg='hogan transform --configs ~/<hogan-config-folder-path>/configs/ --templates . --templates-filter template.yaml --environments-filter '
+```
+and then use the alisa to generate config like
+```
+    hg prod
+```
+this will generate the config for prod environment.
+
 ## Custom handlers in config files
 
 The following custom handlers exist
