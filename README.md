@@ -45,13 +45,13 @@ Some of the arguments are described below:
 
 You can also create an alias of the above command and add to bash_profile
 ```
-    alias hg='hogan transform --configs ~/<hogan-config-folder-path>/configs/ --templates . --templates-filter template.yaml --environments-filter '
+    hg() { hogan transform --configs ~/cventcode/hogan-configs/configs/ --templates . --templates-filter "$1" --environments-filter "$2"; }
 ```
 and then use the alisa to generate config like
 ```
-    hg prod
+    hg tempate.yaml prod
 ```
-this will generate the config for prod environment.
+this will generate the config for prod environment using template.yaml as template file.
 
 ## Custom handlers in config files
 
