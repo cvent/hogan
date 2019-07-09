@@ -34,7 +34,7 @@ impl HelperDef for LowercaseHelper {
 #[cfg(test)]
 mod test {
     use super::*;
-    use transform::test::test_against_configs;
+    use crate::transform::test::test_against_configs;
 
     #[test]
     fn test_lowercase() {

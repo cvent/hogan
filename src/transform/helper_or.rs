@@ -48,8 +48,8 @@ impl HelperDef for OrHelper {
 #[cfg(test)]
 mod test {
     use super::*;
-    use transform::helper_equal::EqualHelper;
-    use transform::test::test_against_configs;
+    use crate::transform::helper_equal::EqualHelper;
+    use crate::transform::test::test_against_configs;
 
     #[test]
     fn test_or() {

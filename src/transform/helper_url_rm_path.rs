@@ -60,7 +60,7 @@ impl HelperDef for UrlRmPathHelper {
 #[cfg(test)]
 mod test {
     use super::*;
-    use transform::test::test_against_configs;
+    use crate::transform::test::test_against_configs;
 
     #[test]
     fn test_url_rm_path() {

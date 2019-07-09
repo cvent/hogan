@@ -2,6 +2,7 @@
 name = "hogan"
 version = "0.2.10"
 authors = ["Jonathan Morley <jmorley@cvent.com>"]
+edition = "2018"
 
 [[bin]]
 name = "hogan"

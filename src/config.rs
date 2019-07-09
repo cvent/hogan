@@ -1,6 +1,6 @@
 use failure::Error;
-use find_file_paths;
-use git;
+use crate::find_file_paths;
+use crate::git;
 use git2::Repository;
 use json_patch::merge;
 use regex::Regex;
@@ -32,10 +32,10 @@ impl FromStr for ConfigUrl {
             Ok(url) => {
                 if url.scheme() == "file" {
                     Ok(ConfigUrl::File {
-                        path: PathBuf::from(s.trim_left_matches("file://")),
+                        path: PathBuf::from(s.trim_start_matches("file://")),
                     })
                 } else {
-                    let mut path_segments = url
+                    let path_segments = url
                         .path_segments()
                         .ok_or_else(|| format_err!("Url cannot be a base"))?
                         .map(|segment| segment.to_owned())

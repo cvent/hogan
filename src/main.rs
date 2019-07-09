@@ -10,7 +10,6 @@ extern crate regex;
 extern crate rouille;
 extern crate shellexpand;
 extern crate stderrlog;
-#[macro_use]
 extern crate structopt;
 
 use failure::Error;
@@ -162,7 +161,7 @@ fn main() -> Result<(), Error> {
             common,
             ignore_existing
         } => {
-            let mut handlebars = hogan::transform::handlebars(common.strict);
+            let handlebars = hogan::transform::handlebars(common.strict);
 
             let template_dir = TemplateDir::new(templates_path)?;
             let mut templates = template_dir.find(templates_regex);
@@ -175,7 +174,7 @@ fn main() -> Result<(), Error> {
             for environment in environments {
                 println!("Updating templates for {}", environment.environment);
 
-                for mut template in &mut templates {
+                for template in &mut templates {
                     debug!("Transforming {:?}", template.path);
 
                     let rendered = template.render(&handlebars, &environment)?;
@@ -205,12 +204,12 @@ fn main() -> Result<(), Error> {
             }
         }
         AppCommand::Server { common, port } => {
-            let mut handlebars = hogan::transform::handlebars(common.strict);
+            let handlebars = hogan::transform::handlebars(common.strict);
 
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
-            let mut environments = RwLock::new(config_dir.find(Regex::new(".+")?));
-            let mut config_dir = Mutex::new(config_dir);
+            let environments = RwLock::new(config_dir.find(Regex::new(".+")?));
+            let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on port {}", port);
             rouille::start_server(("0.0.0.0", port), move |request| {
