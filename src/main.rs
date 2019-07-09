@@ -19,11 +19,11 @@ use hogan::template::{Template, TemplateDir};
 use regex::{Regex, RegexBuilder};
 use rouille::input::plain_text_body;
 use rouille::Response;
-use std::fs::OpenOptions;
 use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::ErrorKind::AlreadyExists;
 use std::io::Read;
 use std::io::Write;
-use std::io::ErrorKind::AlreadyExists;
 use std::mem::replace;
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -86,8 +86,8 @@ enum AppCommand {
         templates_regex: Regex,
 
         /// Ignore existing config files intead of overwriting
-        #[structopt(short="i", long="ignore-existing")]
-        ignore_existing: bool
+        #[structopt(short = "i", long = "ignore-existing")]
+        ignore_existing: bool,
     },
     /// Respond to HTTP requests to transform a template
     #[structopt(name = "server")]
@@ -96,12 +96,7 @@ enum AppCommand {
         common: AppCommon,
 
         /// Port to serve requests on
-        #[structopt(
-            short = "p",
-            long = "port",
-            default_value = "80",
-            value_name = "PORT"
-        )]
+        #[structopt(short = "p", long = "port", default_value = "80", value_name = "PORT")]
         port: u16,
     },
 }
@@ -159,7 +154,7 @@ fn main() -> Result<(), Error> {
             environments_regex,
             templates_regex,
             common,
-            ignore_existing
+            ignore_existing,
         } => {
             let handlebars = hogan::transform::handlebars(common.strict);
 
@@ -184,19 +179,21 @@ fn main() -> Result<(), Error> {
                         if let Err(e) = match OpenOptions::new()
                             .write(true)
                             .create_new(true)
-                            .open(&rendered.path) {
-                                Ok(ref mut f) => f.write_all(&rendered.contents),
-                                Err(ref e) if e.kind() == AlreadyExists => {
-                                    println!("Skipping {:?} - config already exists.", rendered.path);
-                                    trace!("Skipping {:?} - config already exists.", rendered.path);
-                                    Ok(())
-                                },
-                                Err(e) => Err(e)
+                            .open(&rendered.path)
+                        {
+                            Ok(ref mut f) => f.write_all(&rendered.contents),
+                            Err(ref e) if e.kind() == AlreadyExists => {
+                                println!("Skipping {:?} - config already exists.", rendered.path);
+                                trace!("Skipping {:?} - config already exists.", rendered.path);
+                                Ok(())
+                            }
+                            Err(e) => Err(e),
                         } {
                             bail!("Error transforming {:?} due to {}", rendered.path, e)
                         }
                     } else {
-                        if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents) {
+                        if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents)
+                        {
                             bail!("Error transforming {:?} due to {}", rendered.path, e)
                         }
                     }
@@ -306,9 +303,9 @@ mod tests {
     use self::assert_cmd::prelude::*;
     use self::fs_extra::dir;
     use self::predicates::prelude::*;
+    use std::io::Write;
     use std::path::Path;
     use std::process::Command;
-    use std::io::Write;
 
     #[cfg(not(all(target_env = "msvc", target_arch = "x86_64")))]
     #[test]
@@ -319,7 +316,8 @@ mod tests {
             &vec!["tests/fixtures/projects/templates"],
             temp_dir.path(),
             &dir::CopyOptions::new(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let templates_path = temp_dir.path().join("templates");
 
@@ -340,8 +338,10 @@ mod tests {
         );
 
         cmd.assert().stdout(
-           predicate::str::contains(r"regex: /^[^.]*(\w+\.)*template([-.].+)?\.(config|ya?ml|properties)/")
-               .from_utf8(),
+            predicate::str::contains(
+                r"regex: /^[^.]*(\w+\.)*template([-.].+)?\.(config|ya?ml|properties)/",
+            )
+            .from_utf8(),
         );
 
         cmd.assert()
@@ -364,19 +364,17 @@ mod tests {
             );
         }
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-1"),
-                &Path::new("tests/fixtures/projects/rendered/project-1")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-1"),
+            &Path::new("tests/fixtures/projects/rendered/project-1")
+        )
+        .unwrap());
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-2"),
-                &Path::new("tests/fixtures/projects/rendered/project-2")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-2"),
+            &Path::new("tests/fixtures/projects/rendered/project-2")
+        )
+        .unwrap());
     }
 
     #[cfg(not(all(target_env = "msvc", target_arch = "x86_64")))]
@@ -388,7 +386,8 @@ mod tests {
             &vec!["tests/fixtures/projects/templates"],
             temp_dir.path(),
             &dir::CopyOptions::new(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let templates_path = temp_dir.path().join("templates");
 
@@ -396,9 +395,11 @@ mod tests {
         if let Ok(ref mut f) = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .open(&ignore_path) {
-                f.write_all(b"Hamburger.").expect("Failed to create test file for ignore.")
-            }
+            .open(&ignore_path)
+        {
+            f.write_all(b"Hamburger.")
+                .expect("Failed to create test file for ignore.")
+        }
 
         let mut cmd = Command::main_binary().unwrap();
         let cmd = cmd.args(&[
@@ -407,15 +408,15 @@ mod tests {
             "tests/fixtures/configs",
             "--templates",
             templates_path.to_str().unwrap(),
-            "-i"
+            "-i",
         ]);
 
         cmd.assert().success();
 
         // assert that running the command with the ignore flag
         // did not overwrite the manually created project-1/Web.EMPTY.config
-        let data2 = std::fs::read_to_string(&ignore_path)
-            .expect("Failed to read test file for ignore.");
+        let data2 =
+            std::fs::read_to_string(&ignore_path).expect("Failed to read test file for ignore.");
         assert!(data2 == "Hamburger.");
 
         // after running the command again without the ignore flag
@@ -426,22 +427,20 @@ mod tests {
             "--configs",
             "tests/fixtures/configs",
             "--templates",
-            templates_path.to_str().unwrap()
+            templates_path.to_str().unwrap(),
         ]);
         cmd.assert().success();
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-1"),
-                &Path::new("tests/fixtures/projects/rendered/project-1")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-1"),
+            &Path::new("tests/fixtures/projects/rendered/project-1")
+        )
+        .unwrap());
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-2"),
-                &Path::new("tests/fixtures/projects/rendered/project-2")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-2"),
+            &Path::new("tests/fixtures/projects/rendered/project-2")
+        )
+        .unwrap());
     }
 }

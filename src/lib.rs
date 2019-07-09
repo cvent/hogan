@@ -19,8 +19,8 @@ extern crate zip;
 
 pub mod config;
 pub mod git;
-pub mod transform;
 pub mod template;
+pub mod transform;
 
 use regex::Regex;
 use std::path::{Path, PathBuf};

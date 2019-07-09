@@ -1,6 +1,6 @@
-use failure::Error;
 use crate::find_file_paths;
 use crate::git;
+use failure::Error;
 use git2::Repository;
 use json_patch::merge;
 use regex::Regex;
@@ -78,7 +78,8 @@ impl FromStr for ConfigUrl {
                 format!("ssh://{}", str::replace(s, ":", "/"))
             } else {
                 format!("file://{}", s)
-            }.parse(),
+            }
+            .parse(),
             Err(e) => Err(e.into()),
         }
     }
@@ -182,7 +183,8 @@ impl ConfigDir {
 
                 environment.config_data = config_data;
                 environment
-            }).collect()
+            })
+            .collect()
     }
 
     fn find_environments(&self, filter: Regex) -> Box<Iterator<Item = Environment>> {
@@ -439,7 +441,8 @@ mod tests {
         let config_dir = ConfigDir::new(
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
-        ).unwrap();
+        )
+        .unwrap();
         let environments = config_dir.find(
             RegexBuilder::new("config\\..+\\.json$")
                 .case_insensitive(true)
@@ -454,7 +457,8 @@ mod tests {
         let config_dir = ConfigDir::new(
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
-        ).unwrap();
+        )
+        .unwrap();
         let environments = config_dir.find(
             RegexBuilder::new(r#"config\.test\d?\.json"#)
                 .case_insensitive(true)
