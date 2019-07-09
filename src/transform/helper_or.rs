@@ -21,8 +21,8 @@ impl HelperDef for OrHelper {
             .ok_or_else(|| RenderError::new("Right param not found for helper \"or\""))?
             .value();
 
-        let comparison = lvalue.as_str().map_or(false, |v| v.len() > 0)
-            || rvalue.as_str().map_or(false, |v| v.len() > 0);
+        let comparison = lvalue.as_str().map_or(false, |v| !v.is_empty())
+            || rvalue.as_str().map_or(false, |v| !v.is_empty());
 
         if h.is_block() {
             let template = if comparison {

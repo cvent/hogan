@@ -20,7 +20,7 @@ impl HelperDef for UrlRmSlashHelper {
 
         match *value.value() {
             Json::String(ref s) => {
-                if s.ends_with("/") {
+                if s.ends_with('/') {
                     out.write(&s[..s.len() - 1])?;
                 } else {
                     out.write(s)?;

@@ -21,7 +21,7 @@ impl HelperDef for UrlAddSlashHelper {
 
         match *value.value() {
             Json::String(ref s) => {
-                let output = if Url::parse(s).is_ok() && !s.ends_with("/") {
+                let output = if Url::parse(s).is_ok() && !s.ends_with('/') {
                     format!("{}/", s)
                 } else {
                     s.clone()

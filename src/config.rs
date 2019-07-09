@@ -127,7 +127,7 @@ impl ConfigDir {
             ConfigUrl::File { path } => Ok(ConfigDir::File { directory: path }),
         };
 
-        if let &Ok(ref config_dir) = &config_dir {
+        if let Ok(ref config_dir) = config_dir {
             if !config_dir.directory().is_dir() {
                 bail!(
                     "{:?} either does not exist or is not a directory. It needs to be both",
@@ -157,7 +157,7 @@ impl ConfigDir {
     }
 
     pub fn find(&self, filter: Regex) -> Vec<Environment> {
-        fn find_env_type_data<'a>(types: &'a Vec<EnvironmentType>, name: &str) -> &'a Value {
+        fn find_env_type_data<'a>(types: &'a [EnvironmentType], name: &str) -> &'a Value {
             types
                 .iter()
                 .find(|e| e.environment_type == name)

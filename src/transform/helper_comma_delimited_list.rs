@@ -28,7 +28,7 @@ impl HelperDef for CommaDelimitedListHelper {
 
                     let mut render_list = Vec::new();
 
-                    for i in 0..len {
+                    for (i, item) in list.iter().enumerate().take(len) {
                         let mut local_rc = rc.derive();
 
                         if let Some(inner_path) = value.path() {
@@ -39,7 +39,7 @@ impl HelperDef for CommaDelimitedListHelper {
 
                         if let Some(block_param) = h.block_param() {
                             let mut map = BTreeMap::new();
-                            map.insert(block_param.to_string(), to_json(&list[i]));
+                            map.insert(block_param.to_string(), to_json(item));
                             local_rc.push_block_context(&map)?;
                         }
 

@@ -2,15 +2,14 @@
 
 #[macro_use]
 extern crate failure;
-extern crate hogan;
+use hogan;
 #[macro_use]
 extern crate log;
-extern crate regex;
 #[macro_use]
 extern crate rouille;
-extern crate shellexpand;
-extern crate stderrlog;
-extern crate structopt;
+use shellexpand;
+use stderrlog;
+use structopt;
 
 use failure::Error;
 use hogan::config::ConfigDir;
@@ -191,11 +190,10 @@ fn main() -> Result<(), Error> {
                         } {
                             bail!("Error transforming {:?} due to {}", rendered.path, e)
                         }
-                    } else {
-                        if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents)
-                        {
-                            bail!("Error transforming {:?} due to {}", rendered.path, e)
-                        }
+                    } else if let Err(e) =
+                        File::create(&rendered.path)?.write_all(&rendered.contents)
+                    {
+                        bail!("Error transforming {:?} due to {}", rendered.path, e)
                     }
                 }
             }
@@ -294,11 +292,11 @@ fn main() -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    extern crate assert_cmd;
-    extern crate dir_diff;
-    extern crate fs_extra;
-    extern crate predicates;
-    extern crate tempfile;
+    use assert_cmd;
+    use dir_diff;
+    use fs_extra;
+    use predicates;
+    use tempfile;
 
     use self::assert_cmd::prelude::*;
     use self::fs_extra::dir;
