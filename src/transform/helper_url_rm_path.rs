@@ -21,7 +21,7 @@ impl HelperDef for UrlRmPathHelper {
 
         match *value.value() {
             Json::String(ref s) => {
-                let url = if s.ends_with("/") {
+                let url = if s.ends_with('/') {
                     &s[..s.len() - 1]
                 } else {
                     &s
@@ -34,7 +34,7 @@ impl HelperDef for UrlRmPathHelper {
                         }
 
                         let mut url_str = url.as_str();
-                        if url_str.ends_with("/") {
+                        if url_str.ends_with('/') {
                             url_str = &url_str[..url_str.len() - 1];
                         }
 
@@ -60,7 +60,7 @@ impl HelperDef for UrlRmPathHelper {
 #[cfg(test)]
 mod test {
     use super::*;
-    use transform::test::test_against_configs;
+    use crate::transform::test::test_against_configs;
 
     #[test]
     fn test_url_rm_path() {

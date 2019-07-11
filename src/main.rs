@@ -2,16 +2,14 @@
 
 #[macro_use]
 extern crate failure;
-extern crate hogan;
+use hogan;
 #[macro_use]
 extern crate log;
-extern crate regex;
 #[macro_use]
 extern crate rouille;
-extern crate shellexpand;
-extern crate stderrlog;
-#[macro_use]
-extern crate structopt;
+use shellexpand;
+use stderrlog;
+use structopt;
 
 use failure::Error;
 use hogan::config::ConfigDir;
@@ -20,11 +18,11 @@ use hogan::template::{Template, TemplateDir};
 use regex::{Regex, RegexBuilder};
 use rouille::input::plain_text_body;
 use rouille::Response;
-use std::fs::OpenOptions;
 use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::ErrorKind::AlreadyExists;
 use std::io::Read;
 use std::io::Write;
-use std::io::ErrorKind::AlreadyExists;
 use std::mem::replace;
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -87,8 +85,8 @@ enum AppCommand {
         templates_regex: Regex,
 
         /// Ignore existing config files intead of overwriting
-        #[structopt(short="i", long="ignore-existing")]
-        ignore_existing: bool
+        #[structopt(short = "i", long = "ignore-existing")]
+        ignore_existing: bool,
     },
     /// Respond to HTTP requests to transform a template
     #[structopt(name = "server")]
@@ -97,12 +95,7 @@ enum AppCommand {
         common: AppCommon,
 
         /// Port to serve requests on
-        #[structopt(
-            short = "p",
-            long = "port",
-            default_value = "80",
-            value_name = "PORT"
-        )]
+        #[structopt(short = "p", long = "port", default_value = "80", value_name = "PORT")]
         port: u16,
     },
 }
@@ -160,9 +153,9 @@ fn main() -> Result<(), Error> {
             environments_regex,
             templates_regex,
             common,
-            ignore_existing
+            ignore_existing,
         } => {
-            let mut handlebars = hogan::transform::handlebars(common.strict);
+            let handlebars = hogan::transform::handlebars(common.strict);
 
             let template_dir = TemplateDir::new(templates_path)?;
             let mut templates = template_dir.find(templates_regex);
@@ -175,7 +168,7 @@ fn main() -> Result<(), Error> {
             for environment in environments {
                 println!("Updating templates for {}", environment.environment);
 
-                for mut template in &mut templates {
+                for template in &mut templates {
                     debug!("Transforming {:?}", template.path);
 
                     let rendered = template.render(&handlebars, &environment)?;
@@ -185,32 +178,33 @@ fn main() -> Result<(), Error> {
                         if let Err(e) = match OpenOptions::new()
                             .write(true)
                             .create_new(true)
-                            .open(&rendered.path) {
-                                Ok(ref mut f) => f.write_all(&rendered.contents),
-                                Err(ref e) if e.kind() == AlreadyExists => {
-                                    println!("Skipping {:?} - config already exists.", rendered.path);
-                                    trace!("Skipping {:?} - config already exists.", rendered.path);
-                                    Ok(())
-                                },
-                                Err(e) => Err(e)
+                            .open(&rendered.path)
+                        {
+                            Ok(ref mut f) => f.write_all(&rendered.contents),
+                            Err(ref e) if e.kind() == AlreadyExists => {
+                                println!("Skipping {:?} - config already exists.", rendered.path);
+                                trace!("Skipping {:?} - config already exists.", rendered.path);
+                                Ok(())
+                            }
+                            Err(e) => Err(e),
                         } {
                             bail!("Error transforming {:?} due to {}", rendered.path, e)
                         }
-                    } else {
-                        if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents) {
-                            bail!("Error transforming {:?} due to {}", rendered.path, e)
-                        }
+                    } else if let Err(e) =
+                        File::create(&rendered.path)?.write_all(&rendered.contents)
+                    {
+                        bail!("Error transforming {:?} due to {}", rendered.path, e)
                     }
                 }
             }
         }
         AppCommand::Server { common, port } => {
-            let mut handlebars = hogan::transform::handlebars(common.strict);
+            let handlebars = hogan::transform::handlebars(common.strict);
 
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
-            let mut environments = RwLock::new(config_dir.find(Regex::new(".+")?));
-            let mut config_dir = Mutex::new(config_dir);
+            let environments = RwLock::new(config_dir.find(Regex::new(".+")?));
+            let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on port {}", port);
             rouille::start_server(("0.0.0.0", port), move |request| {
@@ -298,18 +292,18 @@ fn main() -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    extern crate assert_cmd;
-    extern crate dir_diff;
-    extern crate fs_extra;
-    extern crate predicates;
-    extern crate tempfile;
+    use assert_cmd;
+    use dir_diff;
+    use fs_extra;
+    use predicates;
+    use tempfile;
 
     use self::assert_cmd::prelude::*;
     use self::fs_extra::dir;
     use self::predicates::prelude::*;
+    use std::io::Write;
     use std::path::Path;
     use std::process::Command;
-    use std::io::Write;
 
     #[cfg(not(all(target_env = "msvc", target_arch = "x86_64")))]
     #[test]
@@ -320,7 +314,8 @@ mod tests {
             &vec!["tests/fixtures/projects/templates"],
             temp_dir.path(),
             &dir::CopyOptions::new(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let templates_path = temp_dir.path().join("templates");
 
@@ -341,8 +336,10 @@ mod tests {
         );
 
         cmd.assert().stdout(
-           predicate::str::contains(r"regex: /^[^.]*(\w+\.)*template([-.].+)?\.(config|ya?ml|properties)/")
-               .from_utf8(),
+            predicate::str::contains(
+                r"regex: /^[^.]*(\w+\.)*template([-.].+)?\.(config|ya?ml|properties)/",
+            )
+            .from_utf8(),
         );
 
         cmd.assert()
@@ -365,19 +362,17 @@ mod tests {
             );
         }
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-1"),
-                &Path::new("tests/fixtures/projects/rendered/project-1")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-1"),
+            &Path::new("tests/fixtures/projects/rendered/project-1")
+        )
+        .unwrap());
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-2"),
-                &Path::new("tests/fixtures/projects/rendered/project-2")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-2"),
+            &Path::new("tests/fixtures/projects/rendered/project-2")
+        )
+        .unwrap());
     }
 
     #[cfg(not(all(target_env = "msvc", target_arch = "x86_64")))]
@@ -389,7 +384,8 @@ mod tests {
             &vec!["tests/fixtures/projects/templates"],
             temp_dir.path(),
             &dir::CopyOptions::new(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let templates_path = temp_dir.path().join("templates");
 
@@ -397,9 +393,11 @@ mod tests {
         if let Ok(ref mut f) = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .open(&ignore_path) {
-                f.write_all(b"Hamburger.").expect("Failed to create test file for ignore.")
-            }
+            .open(&ignore_path)
+        {
+            f.write_all(b"Hamburger.")
+                .expect("Failed to create test file for ignore.")
+        }
 
         let mut cmd = Command::main_binary().unwrap();
         let cmd = cmd.args(&[
@@ -408,15 +406,15 @@ mod tests {
             "tests/fixtures/configs",
             "--templates",
             templates_path.to_str().unwrap(),
-            "-i"
+            "-i",
         ]);
 
         cmd.assert().success();
 
         // assert that running the command with the ignore flag
         // did not overwrite the manually created project-1/Web.EMPTY.config
-        let data2 = std::fs::read_to_string(&ignore_path)
-            .expect("Failed to read test file for ignore.");
+        let data2 =
+            std::fs::read_to_string(&ignore_path).expect("Failed to read test file for ignore.");
         assert!(data2 == "Hamburger.");
 
         // after running the command again without the ignore flag
@@ -427,22 +425,20 @@ mod tests {
             "--configs",
             "tests/fixtures/configs",
             "--templates",
-            templates_path.to_str().unwrap()
+            templates_path.to_str().unwrap(),
         ]);
         cmd.assert().success();
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-1"),
-                &Path::new("tests/fixtures/projects/rendered/project-1")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-1"),
+            &Path::new("tests/fixtures/projects/rendered/project-1")
+        )
+        .unwrap());
 
-        assert!(
-            !dir_diff::is_different(
-                &templates_path.join("project-2"),
-                &Path::new("tests/fixtures/projects/rendered/project-2")
-            ).unwrap()
-        );
+        assert!(!dir_diff::is_different(
+            &templates_path.join("project-2"),
+            &Path::new("tests/fixtures/projects/rendered/project-2")
+        )
+        .unwrap());
     }
 }

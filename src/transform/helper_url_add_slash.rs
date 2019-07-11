@@ -21,7 +21,7 @@ impl HelperDef for UrlAddSlashHelper {
 
         match *value.value() {
             Json::String(ref s) => {
-                let output = if Url::parse(s).is_ok() && !s.ends_with("/") {
+                let output = if Url::parse(s).is_ok() && !s.ends_with('/') {
                     format!("{}/", s)
                 } else {
                     s.clone()
@@ -43,7 +43,7 @@ impl HelperDef for UrlAddSlashHelper {
 #[cfg(test)]
 mod test {
     use super::*;
-    use transform::test::test_against_configs;
+    use crate::transform::test::test_against_configs;
 
     #[test]
     fn test_url_add_slash() {

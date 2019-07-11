@@ -42,7 +42,8 @@ mod test {
     fn config_fixture() -> Value {
         let mut config: Value = serde_json::from_str(&include_str!(
             "../../tests/fixtures/configs/config.TEST.json"
-        )).unwrap();
+        ))
+        .unwrap();
         config["ConfigData"].take()
     }
 

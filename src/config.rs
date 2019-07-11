@@ -1,6 +1,6 @@
+use crate::find_file_paths;
+use crate::git;
 use failure::Error;
-use find_file_paths;
-use git;
 use git2::Repository;
 use json_patch::merge;
 use regex::Regex;
@@ -32,10 +32,10 @@ impl FromStr for ConfigUrl {
             Ok(url) => {
                 if url.scheme() == "file" {
                     Ok(ConfigUrl::File {
-                        path: PathBuf::from(s.trim_left_matches("file://")),
+                        path: PathBuf::from(s.trim_start_matches("file://")),
                     })
                 } else {
-                    let mut path_segments = url
+                    let path_segments = url
                         .path_segments()
                         .ok_or_else(|| format_err!("Url cannot be a base"))?
                         .map(|segment| segment.to_owned())
@@ -78,7 +78,8 @@ impl FromStr for ConfigUrl {
                 format!("ssh://{}", str::replace(s, ":", "/"))
             } else {
                 format!("file://{}", s)
-            }.parse(),
+            }
+            .parse(),
             Err(e) => Err(e.into()),
         }
     }
@@ -126,7 +127,7 @@ impl ConfigDir {
             ConfigUrl::File { path } => Ok(ConfigDir::File { directory: path }),
         };
 
-        if let &Ok(ref config_dir) = &config_dir {
+        if let Ok(ref config_dir) = config_dir {
             if !config_dir.directory().is_dir() {
                 bail!(
                     "{:?} either does not exist or is not a directory. It needs to be both",
@@ -156,7 +157,7 @@ impl ConfigDir {
     }
 
     pub fn find(&self, filter: Regex) -> Vec<Environment> {
-        fn find_env_type_data<'a>(types: &'a Vec<EnvironmentType>, name: &str) -> &'a Value {
+        fn find_env_type_data<'a>(types: &'a [EnvironmentType], name: &str) -> &'a Value {
             types
                 .iter()
                 .find(|e| e.environment_type == name)
@@ -182,7 +183,8 @@ impl ConfigDir {
 
                 environment.config_data = config_data;
                 environment
-            }).collect()
+            })
+            .collect()
     }
 
     fn find_environments(&self, filter: Regex) -> Box<Iterator<Item = Environment>> {
@@ -439,7 +441,8 @@ mod tests {
         let config_dir = ConfigDir::new(
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
-        ).unwrap();
+        )
+        .unwrap();
         let environments = config_dir.find(
             RegexBuilder::new("config\\..+\\.json$")
                 .case_insensitive(true)
@@ -454,7 +457,8 @@ mod tests {
         let config_dir = ConfigDir::new(
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
-        ).unwrap();
+        )
+        .unwrap();
         let environments = config_dir.find(
             RegexBuilder::new(r#"config\.test\d?\.json"#)
                 .case_insensitive(true)

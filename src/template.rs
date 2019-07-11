@@ -1,6 +1,6 @@
-use config::Environment;
+use crate::config::Environment;
+use crate::find_file_paths;
 use failure::Error;
-use find_file_paths;
 use handlebars::Handlebars;
 use regex::Regex;
 use zip::write::{FileOptions, ZipWriter};
@@ -72,7 +72,7 @@ impl Template {
     pub fn render_to_zip(
         &self,
         handlebars: &Handlebars,
-        environments: &Vec<Environment>,
+        environments: &[Environment],
     ) -> Result<Vec<u8>, Error> {
         let options = FileOptions::default().compression_method(Stored);
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
