@@ -1,5 +1,3 @@
-#![warn(unused)]
-
 #[macro_use]
 extern crate failure;
 use hogan;
@@ -15,16 +13,16 @@ use failure::Error;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
 use hogan::template::{Template, TemplateDir};
+use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
 use rouille::input::plain_text_body;
 use rouille::Response;
+use std::collections::HashMap;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::ErrorKind::AlreadyExists;
 use std::io::Read;
 use std::io::Write;
-use std::mem::replace;
-use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use structopt::StructOpt;
@@ -97,6 +95,9 @@ enum AppCommand {
         /// Port to serve requests on
         #[structopt(short = "p", long = "port", default_value = "80", value_name = "PORT")]
         port: u16,
+
+        #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
+        cache_size: usize,
     },
 }
 
@@ -198,96 +199,180 @@ fn main() -> Result<(), Error> {
                 }
             }
         }
-        AppCommand::Server { common, port } => {
+        AppCommand::Server {
+            common,
+            port,
+            cache_size,
+        } => {
             let handlebars = hogan::transform::handlebars(common.strict);
 
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
-            let environments = RwLock::new(config_dir.find(Regex::new(".+")?));
+            let environments = RwLock::new(
+                LruCache::<String, Vec<hogan::config::Environment>>::with_capacity(cache_size),
+            );
+            init_cache(&environments, &config_dir)?;
             let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on port {}", port);
             rouille::start_server(("0.0.0.0", port), move |request| {
                 router!(request,
-                    (POST) (/refresh) => {
-                        match environments.write() {
-                            Ok(mut environments) => match config_dir.lock() {
-                                Ok(config_dir) => {
-                                    replace(environments.deref_mut(), config_dir.refresh().find(Regex::new(".+").unwrap()));
-                                    Response::empty_204()
-                                }
-                                Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                            },
-                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                        }
-                    },
-                    // Transform against all configs
-                    (POST) (/transform) => {
-                        match environments.read() {
-                            Ok(environments) => {
-                                match request.data() {
-                                    Some(mut data) => match request.get_param("filename") {
-                                        Some(filename) => {
-                                            let mut buffer = String::new();
+                        (GET) (/envs/{sha: String}) => {
+                            let sha = format_sha(&sha);
+                            match get_envs(&environments, sha) {
+                                Ok(response) => response,
+                                Err(e) => Response::text(format!("{:?}" ,e)).with_status_code(500)
+                            }
+                        },
+                        // Transform against all configs
+                        (POST) (/transform/{sha: String}) => {
+                            let sha = format_sha(&sha);
+                            match get_env(&environments, &config_dir, sha) {
+                                Ok(environments) => {
+                                    match request.data() {
+                                        Some(mut data) => match request.get_param("filename") {
+                                            Some(filename) => {
+                                                let mut buffer = String::new();
 
-                                            match data.read_to_string(&mut buffer) {
-                                                Ok(_) => {
-                                                    let template = Template {
-                                                        path: PathBuf::from(filename),
-                                                        contents: buffer,
-                                                    };
+                                                match data.read_to_string(&mut buffer) {
+                                                    Ok(_) => {
+                                                        let template = Template {
+                                                            path: PathBuf::from(filename),
+                                                            contents: buffer,
+                                                        };
 
-                                                    match template.render_to_zip(&handlebars, &environments) {
-                                                        Ok(zip) => Response::from_data("application/octet-stream", zip),
-                                                        Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                                                    }
-                                                },
-                                                Err(_) => Response::text("Cannot read body").with_status_code(400)
-                                            }
+                                                        match template.render_to_zip(&handlebars, &environments) {
+                                                            Ok(zip) => Response::from_data("application/octet-stream", zip),
+                                                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
+                                                        }
+                                                    },
+                                                    Err(_) => Response::text("Cannot read body").with_status_code(400)
+                                                }
+                                            },
+                                            None => Response::text("Query parameter 'filename' required").with_status_code(400)
                                         },
-                                        None => Response::text("Query parameter 'filename' required").with_status_code(400)
-                                    },
-                                    None => Response::text("POST body required").with_status_code(400)
-                                }
-                            },
-                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                        }
-                    },
-                    // Transform against a single config
-                    (POST) (/transform/{env: String}) => {
-                        match environments.read() {
-                            Ok(environments) => match environments.iter().find(|e| e.environment == env) {
-                                Some(env) => {
-                                    let body = try_or_400!(plain_text_body(request));
-                                    println!("Transforming {}", body);
-                                    match handlebars.render_template(&body, &env.config_data) {
-                                        Ok(rendered) => Response::text(rendered),
-                                        Err(e) => Response::text(format!("{}", e)).with_status_code(500)
+                                        None => Response::text("POST body required").with_status_code(400)
                                     }
                                 },
-                                None => Response::empty_404()
-                            },
-                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                        }
-                    },
-                    // Return a single config
-                    (GET) (/config/{env: String}) => {
-                        match environments.read() {
-                            Ok(environments) => match environments.iter().find(|e| e.environment == env) {
-                                Some(env) => Response::json(env),
-                                None => Response::empty_404()
-                            },
-                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                        }
-                    },
-                    // default route
-                    _ => Response::empty_404()
+                                Err(e) => Response::text(format!("{}", e)).with_status_code(500)
+                            }
+                        },
+                        // Transform against a single config
+                        (POST) (/transform/{sha: String}/{env: String}) => {
+                            let sha = format_sha(&sha);
+                            match get_env(&environments, &config_dir, sha) {
+                                 Ok(environments) => {
+                                match environments.iter().find(|e| e.environment == env) {
+                                    Some(env) => {
+                                        let body = try_or_400!(plain_text_body(request));
+                                        //println!("Transforming {}", body);
+                                        match handlebars.render_template(&body, &env.config_data) {
+                                            Ok(rendered) => Response::text(rendered),
+                                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
+                                        }
+                                    },
+                                    None => Response::empty_404()
+                                }},
+                                Err(e) => Response::text(format!("Error rendering config: {:?}", e)).with_status_code(500)
+                            }
+                        },
+                        // Return a single config
+                        (GET) (/config/{sha: String}/{env: String}) => {
+                            let sha = format_sha(&sha);
+                            match get_env(&environments, &config_dir, sha) {
+                                Ok(environments) => {
+                                    match environments.iter().find(|e| e.environment == env) {
+                                        Some(env) => Response::json(env),
+                                        None => Response::empty_404()
+                                    }
+                                },
+                                Err(e) => Response::text(format!("Error fetching config: {:?}", e)).with_status_code(500)
+                            }
+                        },
+                        // default route
+                        _ => Response::empty_404()
                 )
             });
         }
     }
 
     Ok(())
+}
+
+fn init_cache(
+    cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
+    repo: &hogan::config::ConfigDir,
+) -> Result<(), Error> {
+    match repo {
+        ConfigDir::Git { head_sha, .. } => {
+            let mut cache = cache.write().unwrap();
+            info!("Initializing cache to: {}", head_sha);
+            cache.insert(head_sha.clone(), repo.find(Regex::new(".+")?));
+            Ok(())
+        }
+        ConfigDir::File { .. } => Err(format_err!("Cannot change file based configuration")),
+    }
+}
+
+fn get_env(
+    cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
+    repo: &Mutex<hogan::config::ConfigDir>,
+    sha: &str,
+) -> Result<Vec<hogan::config::Environment>, Error> {
+    //TODO: Add logic here to get a read lock and peek at cache
+    let mut cache = match cache.write() {
+        Ok(cache) => cache,
+        Err(e) => return Err(format_err!("Unable to find env {}", e)),
+    };
+    if let Some(envs) = cache.get(sha) {
+        Ok(envs.clone())
+    } else {
+        match repo.lock() {
+            Ok(repo) => {
+                if let Some(sha) = repo.refresh(Some(sha)) {
+                    cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
+                };
+            }
+            Err(e) => return Err(format_err!("Unable to lock repository {}", e)),
+        }
+        if let Some(envs) = cache.get(sha) {
+            Ok(envs.clone())
+        } else {
+            Err(format_err!("Unable to find the configuration sha {}", sha))
+        }
+    }
+}
+
+fn get_envs(
+    cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
+    sha: &str,
+) -> Result<Response, Error> {
+    //TODO: Add logic to fetch unknown shas (need to get faster locking though)
+    let cache = cache
+        .read()
+        .map_err(|e| format_err!("Unable to lock cache {}", e))?;
+    if let Some(envs) = (*cache).peek(sha) {
+        let mut env_list = Vec::new();
+        for env in envs.iter() {
+            let mut env_map = HashMap::new();
+            env_map.insert("Name", &env.environment);
+            if let Some(environment_type) = &env.environment_type {
+                env_map.insert("Type", environment_type);
+            }
+            env_list.push(env_map);
+        }
+        Ok(Response::json(&env_list))
+    } else {
+        Ok(Response::empty_404())
+    }
+}
+
+fn format_sha(sha: &str) -> &str {
+    if sha.len() >= 7 {
+        &sha[0..7]
+    } else {
+        sha
+    }
 }
 
 #[cfg(test)]
@@ -319,7 +404,7 @@ mod tests {
 
         let templates_path = temp_dir.path().join("templates");
 
-        let mut cmd = Command::main_binary().unwrap();
+        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
 
         let cmd = cmd.args(&[
             "transform",
@@ -399,7 +484,7 @@ mod tests {
                 .expect("Failed to create test file for ignore.")
         }
 
-        let mut cmd = Command::main_binary().unwrap();
+        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
         let cmd = cmd.args(&[
             "transform",
             "--configs",
@@ -419,7 +504,7 @@ mod tests {
 
         // after running the command again without the ignore flag
         // assert that the configs now match those in the rendered directory
-        let mut cmd = Command::main_binary().unwrap();
+        let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
         let cmd = cmd.args(&[
             "transform",
             "--configs",
