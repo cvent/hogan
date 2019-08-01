@@ -217,6 +217,10 @@ fn main() -> Result<(), Error> {
             info!("Starting server on port {}", port);
             rouille::start_server(("0.0.0.0", port), move |request| {
                 router!(request,
+                        // Health Check route
+                        (GET) (/ok) => {
+                            Response::empty_204()
+                        },
                         (GET) (/envs/{sha: String}) => {
                             let sha = format_sha(&sha);
                             match get_envs(&environments, sha) {
