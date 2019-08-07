@@ -28,7 +28,8 @@ pub fn clone(
     callbacks.transfer_progress(|stats| {
         if stats.received_objects() == stats.total_objects() {
             let step = stats.total_objects() / 10;
-            if stats.indexed_objects() % step == 0
+            if step == 0
+                || stats.indexed_objects() % step == 0
                 || stats.total_objects() == stats.indexed_objects()
             {
                 info!(
@@ -39,7 +40,8 @@ pub fn clone(
             }
         } else if stats.total_objects() > 0 {
             let step = stats.total_objects() / 10;
-            if stats.received_objects() % step == 0
+            if step == 0
+                || stats.received_objects() % step == 0
                 || stats.total_objects() == stats.received_objects()
             {
                 info!(
@@ -129,7 +131,8 @@ fn fetch(
     cb.transfer_progress(|stats| {
         if stats.received_objects() == stats.total_objects() {
             let step = stats.total_objects() / 10;
-            if stats.indexed_objects() % step == 0
+            if step == 0
+                || stats.indexed_objects() % step == 0
                 || stats.indexed_objects() == stats.total_objects()
             {
                 info!(
@@ -140,7 +143,8 @@ fn fetch(
             }
         } else if stats.total_objects() > 0 {
             let step = stats.total_objects() / 10;
-            if stats.received_objects() % step == 0
+            if step == 0
+                || stats.received_objects() % step == 0
                 || stats.received_objects() == stats.total_objects()
             {
                 info!(

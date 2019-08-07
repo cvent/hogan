@@ -99,15 +99,7 @@ enum AppCommand {
         #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
         cache_size: usize,
 
-        /// Filter environments to render templates for
-        #[structopt(
-            short = "e",
-            long = "environments-filter",
-            parse(try_from_str = "App::parse_regex"),
-            default_value = ".+",
-            value_name = "REGEX"
-        )]
-        environments_regex: Regex,
+        //TODO: Add parameter to filter environments to render templates for
     },
 }
 
@@ -212,8 +204,7 @@ fn main() -> Result<(), Error> {
         AppCommand::Server {
             common,
             port,
-            cache_size, ..
-            //TODO Add environments_regex -- Make the regex configurable
+            cache_size
         } => {
             let handlebars = hogan::transform::handlebars(common.strict);
 
