@@ -223,7 +223,7 @@ fn main() -> Result<(), Error> {
                         },
                         (GET) (/envs/{sha: String}) => {
                             let sha = format_sha(&sha);
-                            match get_envs(&environments, sha) {
+                            match get_envs(&environments, &config_dir, sha) {
                                 Ok(response) => response,
                                 Err(e) => Response::text(format!("{:?}" ,e)).with_status_code(500)
                             }
@@ -327,7 +327,7 @@ fn get_env(
     //TODO: Add logic here to get a read lock and peek at cache
     let mut cache = match cache.write() {
         Ok(cache) => cache,
-        Err(e) => return Err(format_err!("Unable to find env {}", e)),
+        Err(e) => return Err(format_err!("Unable to lock cache {}", e)),
     };
     if let Some(envs) = cache.get(sha) {
         Ok(envs.clone())
@@ -348,27 +348,47 @@ fn get_env(
     }
 }
 
+fn format_envs(envs: &Vec<hogan::config::Environment>) -> Vec<HashMap<&str, &String>> {
+    let mut env_list = Vec::new();
+    for env in envs.iter() {
+        let mut env_map = HashMap::new();
+        env_map.insert("Name", &env.environment);
+        if let Some(environment_type) = &env.environment_type {
+            env_map.insert("Type", environment_type);
+        }
+        env_list.push(env_map);
+    }
+
+    env_list
+}
+
 fn get_envs(
     cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
+    repo: &Mutex<hogan::config::ConfigDir>,
     sha: &str,
 ) -> Result<Response, Error> {
-    //TODO: Add logic to fetch unknown shas (need to get faster locking though)
-    let cache = cache
-        .read()
-        .map_err(|e| format_err!("Unable to lock cache {}", e))?;
-    if let Some(envs) = (*cache).peek(sha) {
-        let mut env_list = Vec::new();
-        for env in envs.iter() {
-            let mut env_map = HashMap::new();
-            env_map.insert("Name", &env.environment);
-            if let Some(environment_type) = &env.environment_type {
-                env_map.insert("Type", environment_type);
-            }
-            env_list.push(env_map);
-        }
+    let mut cache = match cache.write() {
+        Ok(cache) => cache,
+        Err(e) => return Err(format_err!("Unable to lock cache: {}", e)),
+    };
+    if let Some(envs) = cache.get(sha) {
+        let env_list = format_envs(envs);
         Ok(Response::json(&env_list))
     } else {
-        Ok(Response::empty_404())
+        match repo.lock() {
+            Ok(repo) => {
+                if let Some(sha) = repo.refresh(None, Some(sha)) {
+                    cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
+                };
+            }
+            Err(e) => return Err(format_err!("Unable to lock repository {}", e)),
+        }
+        if let Some(envs) = cache.get(sha) {
+            let env_list = format_envs(envs);
+            Ok(Response::json(&env_list))
+        } else {
+            Ok(Response::empty_404())
+        }
     }
 }
 
