@@ -231,7 +231,7 @@ fn main() -> Result<(), Error> {
                         // Transform against all configs
                         (POST) (/transform/{sha: String}) => {
                             let sha = format_sha(&sha);
-                            match get_env(&environments, &config_dir, sha) {
+                            match get_env(&environments, &config_dir, None, sha) {
                                 Ok(environments) => {
                                     match request.data() {
                                         Some(mut data) => match request.get_param("filename") {
@@ -264,7 +264,7 @@ fn main() -> Result<(), Error> {
                         // Transform against a single config
                         (POST) (/transform/{sha: String}/{env: String}) => {
                             let sha = format_sha(&sha);
-                            match get_env(&environments, &config_dir, sha) {
+                            match get_env(&environments, &config_dir, None, sha) {
                                  Ok(environments) => {
                                 match environments.iter().find(|e| e.environment == env) {
                                     Some(env) => {
@@ -283,7 +283,7 @@ fn main() -> Result<(), Error> {
                         // Return a single config
                         (GET) (/config/{sha: String}/{env: String}) => {
                             let sha = format_sha(&sha);
-                            match get_env(&environments, &config_dir, sha) {
+                            match get_env(&environments, &config_dir, None, sha) {
                                 Ok(environments) => {
                                     match environments.iter().find(|e| e.environment == env) {
                                         Some(env) => Response::json(env),
@@ -321,6 +321,7 @@ fn init_cache(
 fn get_env(
     cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
     repo: &Mutex<hogan::config::ConfigDir>,
+    remote: Option<&str>,
     sha: &str,
 ) -> Result<Vec<hogan::config::Environment>, Error> {
     //TODO: Add logic here to get a read lock and peek at cache
@@ -333,7 +334,7 @@ fn get_env(
     } else {
         match repo.lock() {
             Ok(repo) => {
-                if let Some(sha) = repo.refresh(Some(sha)) {
+                if let Some(sha) = repo.refresh(remote, Some(sha)) {
                     cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
                 };
             }

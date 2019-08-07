@@ -1,7 +1,8 @@
 use failure::Error;
 use git2::build::RepoBuilder;
-use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
+use git2::{AutotagOption, Cred, FetchOptions, RemoteCallbacks, Repository};
 use std::path::Path;
+use std::str;
 use url::Url;
 
 pub fn clone(
@@ -23,6 +24,35 @@ pub fn clone(
             Cred::ssh_key(username_from_url.unwrap(), None, ssh_key_path, None)
         });
     }
+
+    callbacks.transfer_progress(|stats| {
+        if stats.received_objects() == stats.total_objects() {
+            let step = stats.total_objects() / 10;
+            if stats.indexed_objects() % step == 0
+                || stats.total_objects() == stats.indexed_objects()
+            {
+                info!(
+                    "Resolving deltas {}/{}",
+                    stats.indexed_deltas(),
+                    stats.total_deltas()
+                );
+            }
+        } else if stats.total_objects() > 0 {
+            let step = stats.total_objects() / 10;
+            if stats.received_objects() % step == 0
+                || stats.total_objects() == stats.received_objects()
+            {
+                info!(
+                    "Received {}/{} objects ({}) in {} bytes",
+                    stats.received_objects(),
+                    stats.total_objects(),
+                    stats.indexed_objects(),
+                    stats.received_bytes()
+                );
+            }
+        }
+        true
+    });
 
     let mut fetch_options = FetchOptions::new();
     fetch_options.remote_callbacks(callbacks);
@@ -75,29 +105,77 @@ fn detach_head(repo: &Repository, sha: &str) -> Result<(), Error> {
     repo.set_head_detached(sha_oid).map_err(|e| e.into())
 }
 
-pub fn reset(
+fn fetch(
     repo: &Repository,
-    branch: &str,
+    remote: &str,
     ssh_key_path: Option<&Path>,
     url: Option<&Url>,
-    sha: Option<&str>,
-    force_refresh: bool,
-) -> Result<String, Error> {
-    let callback = if let Some(s) = ssh_key_path {
+) -> Result<(), Error> {
+    let mut cb = if let Some(s) = ssh_key_path {
         make_ssh_auth(s)
     } else if let Some(u) = url {
         make_password_auth(u)
     } else {
         RemoteCallbacks::default()
     };
-    let mut fetch_options = FetchOptions::new();
-    fetch_options.remote_callbacks(callback);
+    let mut remote = repo
+        .find_remote(remote)
+        .or_else(|_| repo.remote_anonymous(remote))?;
+    cb.sideband_progress(|data| {
+        info!("remote: {}", str::from_utf8(data).unwrap());
+        true
+    });
 
+    cb.transfer_progress(|stats| {
+        if stats.received_objects() == stats.total_objects() {
+            let step = stats.total_objects() / 10;
+            if stats.indexed_objects() % step == 0
+                || stats.indexed_objects() == stats.total_objects()
+            {
+                info!(
+                    "Resolving deltas {}/{}",
+                    stats.indexed_deltas(),
+                    stats.total_deltas()
+                );
+            }
+        } else if stats.total_objects() > 0 {
+            let step = stats.total_objects() / 10;
+            if stats.received_objects() % step == 0
+                || stats.received_objects() == stats.total_objects()
+            {
+                info!(
+                    "Received {}/{} objects ({}) in {} bytes",
+                    stats.received_objects(),
+                    stats.total_objects(),
+                    stats.indexed_objects(),
+                    stats.received_bytes()
+                );
+            }
+        }
+        true
+    });
+
+    let mut fo = FetchOptions::new();
+    fo.remote_callbacks(cb);
+    remote.download(&[], Some(&mut fo))?;
+
+    remote.disconnect();
+
+    remote.update_tips(None, true, AutotagOption::Unspecified, None)?;
+
+    Ok(())
+}
+
+pub fn reset(
+    repo: &Repository,
+    remote: &str,
+    ssh_key_path: Option<&Path>,
+    url: Option<&Url>,
+    sha: Option<&str>,
+    force_refresh: bool,
+) -> Result<String, Error> {
     if force_refresh {
-        info!("Fetching {}", branch);
-        repo.find_remote("origin")?
-            .fetch(&[branch], Some(&mut fetch_options), None)?;
-        info!("Resolving target {}", branch);
+        fetch(repo, remote, ssh_key_path, url)?;
     };
 
     if let Some(sha) = sha {
@@ -105,8 +183,7 @@ pub fn reset(
             Ok(_) => {}
             Err(_) => {
                 info!("Couldn't find {}. Trying to refreshing repo", sha);
-                repo.find_remote("origin")?
-                    .fetch(&[branch], Some(&mut fetch_options), None)?;
+                fetch(repo, remote, ssh_key_path, url)?;
                 match detach_head(repo, sha) {
                     Ok(_) => {}
                     Err(e) => {

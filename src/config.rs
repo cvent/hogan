@@ -169,7 +169,7 @@ impl ConfigDir {
         }
     }
 
-    pub fn refresh(&self, target: Option<&str>) -> Option<String> {
+    pub fn refresh(&self, remote: Option<&str>, target: Option<&str>) -> Option<String> {
         match self {
             ConfigDir::File { .. } => None,
             ConfigDir::Git {
@@ -191,7 +191,7 @@ impl ConfigDir {
                 };
                 match git::reset(
                     &git_repo,
-                    "origin/master",
+                    remote.unwrap_or("origin"),
                     Some(ssh_key_path),
                     Some(url),
                     target,
