@@ -1,7 +1,6 @@
 use handlebars::*;
 use itertools::join;
 use serde_json::value::Value as Json;
-use std::collections::BTreeMap;
 
 #[derive(Clone, Copy)]
 pub struct CommaDelimitedListHelper;
@@ -38,9 +37,9 @@ impl HelperDef for CommaDelimitedListHelper {
                         }
 
                         if let Some(block_param) = h.block_param() {
-                            let mut map = BTreeMap::new();
-                            map.insert(block_param.to_string(), to_json(item));
-                            local_rc.push_block_context(&map)?;
+                            let mut block_params = BlockParams::new();
+                            block_params.add_value(&block_param.to_string(), to_json(item))?;
+                            local_rc.push_block_context(block_params)?;
                         }
 
                         render_list.push(template.renders(r, ctx, &mut local_rc)?);

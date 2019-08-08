@@ -1,7 +1,6 @@
 use crate::find_file_paths;
 use crate::git;
 use failure::Error;
-use git2::Repository;
 use json_patch::merge;
 use regex::Regex;
 use serde_json::{self, Value};
@@ -90,7 +89,9 @@ pub enum ConfigDir {
         directory: PathBuf,
     },
     Git {
-        git_repo: Repository,
+        url: Url,
+        head_sha: String,
+        ssh_key_path: PathBuf,
         temp_dir: TempDir,
         directory: PathBuf,
     },
@@ -110,16 +111,22 @@ impl ConfigDir {
                     &url,
                     branch.as_ref().map(|x| &**x),
                     temp_dir.path(),
-                    Some(ssh_key_path),
+                    Some(&ssh_key_path),
                 )?;
+
+                let head_sha = git::get_head_sha(&git_repo)?;
 
                 let directory = match git_repo.workdir() {
                     Some(workdir) => workdir.join(internal_path),
                     None => bail!("No working directory found for git repository"),
                 };
+                let url = url.clone();
+                let ssh_key_path = ssh_key_path.to_owned();
 
                 Ok(ConfigDir::Git {
-                    git_repo,
+                    url,
+                    head_sha,
+                    ssh_key_path,
                     temp_dir,
                     directory,
                 })
@@ -139,6 +146,22 @@ impl ConfigDir {
         config_dir
     }
 
+    pub fn extend(&self, branch: &str) -> Result<ConfigDir, Error> {
+        match self {
+            ConfigDir::Git {
+                url, ssh_key_path, ..
+            } => ConfigDir::new(
+                ConfigUrl::Git {
+                    url: url.clone(),
+                    branch: Some(branch.to_owned()),
+                    internal_path: PathBuf::new(),
+                },
+                ssh_key_path,
+            ),
+            ConfigDir::File { .. } => Err(format_err!("Can not extend file config")),
+        }
+    }
+
     pub fn directory(&self) -> &Path {
         match *self {
             ConfigDir::File { ref directory, .. } => directory,
@@ -146,14 +169,42 @@ impl ConfigDir {
         }
     }
 
-    // TODO: Implement being able to re-checkout a git repo
-    pub fn refresh(&self) -> &Self {
-        match *self {
-            ConfigDir::File { .. } => {}
-            ConfigDir::Git { .. } => {}
+    pub fn refresh(&self, remote: Option<&str>, target: Option<&str>) -> Option<String> {
+        match self {
+            ConfigDir::File { .. } => None,
+            ConfigDir::Git {
+                directory,
+                url,
+                ssh_key_path,
+                ..
+            } => {
+                let git_repo = match git::build_repo(directory.to_str().unwrap()) {
+                    Ok(repo) => repo,
+                    Err(e) => {
+                        error!(
+                            "Error: {} \n Unable to find the git repo: {}",
+                            e,
+                            directory.to_str().unwrap()
+                        );
+                        return None;
+                    }
+                };
+                match git::reset(
+                    &git_repo,
+                    remote.unwrap_or("origin"),
+                    Some(ssh_key_path),
+                    Some(url),
+                    target,
+                    false,
+                ) {
+                    Ok(sha) => Some(sha),
+                    Err(e) => {
+                        error!("Error refreshing to {:?} {:?}", target, e);
+                        None
+                    }
+                }
+            }
         }
-
-        self
     }
 
     pub fn find(&self, filter: Regex) -> Vec<Environment> {
@@ -192,7 +243,7 @@ impl ConfigDir {
             find_file_paths(self.directory(), filter)
                 .filter_map(|p| File::open(p).ok())
                 .filter_map(|f| serde_json::from_reader(f).ok())
-                .filter_map(|c: Config| c.as_environment()),
+                .filter_map(|c: Config| c.into_environment()),
         )
     }
 
@@ -208,7 +259,7 @@ impl ConfigDir {
                     File::open(&path)
                         .ok()
                         .and_then(|f| serde_json::from_reader(f).ok())
-                        .and_then(|c: Config| c.as_environment_type())
+                        .and_then(|c: Config| c.into_environment_type())
                         .and_then(|mut e| {
                             e.environment_type = env_type;
                             Some(e)
@@ -226,14 +277,14 @@ enum Config {
 }
 
 impl Config {
-    fn as_environment(self) -> Option<Environment> {
+    fn into_environment(self) -> Option<Environment> {
         match self {
             Config::Environment(e) => Some(e),
             _ => None,
         }
     }
 
-    fn as_environment_type(self) -> Option<EnvironmentType> {
+    fn into_environment_type(self) -> Option<EnvironmentType> {
         match self {
             Config::EnvironmentType(e) => Some(e),
             _ => None,
@@ -241,7 +292,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct Environment {
     pub environment: String,
@@ -249,7 +300,7 @@ pub struct Environment {
     pub config_data: Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 struct EnvironmentType {
     environment_type: String,
