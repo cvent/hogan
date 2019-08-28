@@ -67,10 +67,8 @@ matrix:
     # - env: TARGET=i686-unknown-freebsd DISABLE_TESTS=1
     # - env: TARGET=x86_64-unknown-freebsd DISABLE_TESTS=1
     # - env: TARGET=x86_64-unknown-netbsd DISABLE_TESTS=1
-
     # Windows
     # - env: TARGET=x86_64-pc-windows-gnu
-
     # Bare metal
     # These targets don't support std and as such are likely not suitable for
     # most crates.
@@ -78,7 +76,6 @@ matrix:
     # - env: TARGET=thumbv7em-none-eabi
     # - env: TARGET=thumbv7em-none-eabihf
     # - env: TARGET=thumbv7m-none-eabi
-
     # Testing other channels
     # - env: TARGET=x86_64-unknown-linux-gnu
     #   rust: nightly
@@ -116,7 +113,7 @@ deploy:
     # In this example, there are some targets that are tested using the stable
     # and nightly channels. This condition makes sure there is only one release
     # for such targets and that's generated using the stable channel
-    condition: $TRAVIS_RUST_VERSION = stable
+    condition: $TRAVIS_RUST_VERSION = nightly
     tags: true
   provider: releases
   skip_cleanup: true
