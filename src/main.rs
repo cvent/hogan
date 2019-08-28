@@ -1,30 +1,37 @@
+#![feature(proc_macro_hygiene, decl_macro)]
+
 #[macro_use]
 extern crate failure;
-use hogan;
 #[macro_use]
 extern crate log;
 #[macro_use]
-extern crate rouille;
-use shellexpand;
-use stderrlog;
-use structopt;
+extern crate rocket;
+#[macro_use]
+extern crate rocket_contrib;
 
 use failure::Error;
+use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
 use hogan::template::{Template, TemplateDir};
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
-use rouille::input::plain_text_body;
-use rouille::Response;
+use rocket::config::Config;
+use rocket::http::Status;
+use rocket::{Data, State};
+use rocket_contrib::json::{Json, JsonValue};
+use rocket_lamb::RocketExt;
+use serde::Serialize;
+use shellexpand;
 use std::collections::HashMap;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::ErrorKind::AlreadyExists;
-use std::io::Read;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::{Mutex, RwLock};
+use std::sync::Mutex;
+use stderrlog;
+use structopt;
 use structopt::StructOpt;
 
 /// Transform templates with handlebars
@@ -96,9 +103,13 @@ enum AppCommand {
         #[structopt(short = "p", long = "port", default_value = "80", value_name = "PORT")]
         port: u16,
 
+        /// If enabled, configures the server to handle requests as a lambda behind an API Gateway Proxy
+        /// See: https://github.com/GREsau/rocket-lamb
+        #[structopt(long = "lambda")]
+        lambda: bool,
+
         #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
         cache_size: usize,
-
         //TODO: Add parameter to filter environments to render templates for
     },
 }
@@ -204,114 +215,220 @@ fn main() -> Result<(), Error> {
         AppCommand::Server {
             common,
             port,
-            cache_size
+            cache_size,
+            lambda,
         } => {
-            let handlebars = hogan::transform::handlebars(common.strict);
-
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
-            let environments = RwLock::new(
+            let environments = Mutex::new(
                 LruCache::<String, Vec<hogan::config::Environment>>::with_capacity(cache_size),
             );
+
             init_cache(&environments, &config_dir)?;
             let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on port {}", port);
-            rouille::start_server(("0.0.0.0", port), move |request| {
-                router!(request,
-                        // Health Check route
-                        (GET) (/ok) => {
-                            Response::empty_204()
-                        },
-                        (GET) (/envs/{sha: String}) => {
-                            let sha = format_sha(&sha);
-                            match get_envs(&environments, &config_dir, sha) {
-                                Ok(response) => response,
-                                Err(e) => Response::text(format!("{:?}" ,e)).with_status_code(500)
-                            }
-                        },
-                        // Transform against all configs
-                        (POST) (/transform/{sha: String}) => {
-                            let sha = format_sha(&sha);
-                            match get_env(&environments, &config_dir, None, sha) {
-                                Ok(environments) => {
-                                    match request.data() {
-                                        Some(mut data) => match request.get_param("filename") {
-                                            Some(filename) => {
-                                                let mut buffer = String::new();
-
-                                                match data.read_to_string(&mut buffer) {
-                                                    Ok(_) => {
-                                                        let template = Template {
-                                                            path: PathBuf::from(filename),
-                                                            contents: buffer,
-                                                        };
-
-                                                        match template.render_to_zip(&handlebars, &environments) {
-                                                            Ok(zip) => Response::from_data("application/octet-stream", zip),
-                                                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                                                        }
-                                                    },
-                                                    Err(_) => Response::text("Cannot read body").with_status_code(400)
-                                                }
-                                            },
-                                            None => Response::text("Query parameter 'filename' required").with_status_code(400)
-                                        },
-                                        None => Response::text("POST body required").with_status_code(400)
-                                    }
-                                },
-                                Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                            }
-                        },
-                        // Transform against a single config
-                        (POST) (/transform/{sha: String}/{env: String}) => {
-                            let sha = format_sha(&sha);
-                            match get_env(&environments, &config_dir, None, sha) {
-                                 Ok(environments) => {
-                                match environments.iter().find(|e| e.environment == env) {
-                                    Some(env) => {
-                                        let body = try_or_400!(plain_text_body(request));
-                                        //println!("Transforming {}", body);
-                                        match handlebars.render_template(&body, &env.config_data) {
-                                            Ok(rendered) => Response::text(rendered),
-                                            Err(e) => Response::text(format!("{}", e)).with_status_code(500)
-                                        }
-                                    },
-                                    None => Response::empty_404()
-                                }},
-                                Err(e) => Response::text(format!("Error rendering config: {:?}", e)).with_status_code(500)
-                            }
-                        },
-                        // Return a single config
-                        (GET) (/config/{sha: String}/{env: String}) => {
-                            let sha = format_sha(&sha);
-                            match get_env(&environments, &config_dir, None, sha) {
-                                Ok(environments) => {
-                                    match environments.iter().find(|e| e.environment == env) {
-                                        Some(env) => Response::json(env),
-                                        None => Response::empty_404()
-                                    }
-                                },
-                                Err(e) => Response::text(format!("Error fetching config: {:?}", e)).with_status_code(500)
-                            }
-                        },
-                        // default route
-                        _ => Response::empty_404()
-                )
-            });
+            let state = ServerState {
+                environments,
+                config_dir,
+                strict: common.strict,
+            };
+            start_server(port, lambda, state)?;
         }
     }
 
     Ok(())
 }
 
+struct ServerState {
+    environments: Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
+    config_dir: Mutex<hogan::config::ConfigDir>,
+    strict: bool,
+}
+
+fn start_server(port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
+    let mut config = Config::development();
+    config.set_port(port);
+    let server = rocket::custom(config)
+        .mount(
+            "/",
+            routes![
+                health_check,
+                get_envs,
+                get_config_by_env,
+                transform_env,
+                transform_all_envs,
+                get_branch_sha,
+            ],
+        )
+        .manage(state);
+    if lambda {
+        server.lambda().launch();
+    } else {
+        server.launch();
+    }
+    Ok(())
+}
+
+#[get("/ok")]
+fn health_check() -> Status {
+    Status::NoContent
+}
+
+#[post("/transform/<sha>/<env>", data = "<body>")]
+fn transform_env(
+    body: Data,
+    sha: String,
+    env: String,
+    state: State<ServerState>,
+) -> Result<String, Status> {
+    let sha = format_sha(&sha);
+    match get_env(&state.environments, &state.config_dir, None, sha) {
+        Some(environments) => match environments.iter().find(|e| e.environment == env) {
+            Some(env) => {
+                let handlebars = hogan::transform::handlebars(state.strict);
+                let mut data = String::new();
+                body.open().read_to_string(&mut data).map_err(|e| {
+                    warn!("Unable to consume transform body: {:?}", e);
+                    Status::InternalServerError
+                })?;
+                handlebars
+                    .render_template(&data, &env.config_data)
+                    .map_err(|_| Status::BadRequest)
+            }
+            None => Err(Status::NotFound),
+        },
+        None => Err(Status::NotFound),
+    }
+}
+
+#[post("/transform/<sha>?<filename>", data = "<body>")]
+fn transform_all_envs(
+    sha: String,
+    filename: String,
+    body: Data,
+    state: State<ServerState>,
+) -> Result<Vec<u8>, Status> {
+    let sha = format_sha(&sha);
+    match get_env(&state.environments, &state.config_dir, None, &sha) {
+        Some(environments) => {
+            let handlebars = hogan::transform::handlebars(state.strict);
+            let mut data = String::new();
+            body.open()
+                .read_to_string(&mut data)
+                .map_err(|e| {
+                    warn!("Unable to consume transform body: {:?}", e);
+                    Status::InternalServerError
+                })
+                .map_err(|e| {
+                    warn!("Unable to read request body {:?}", e);
+                    Status::InternalServerError
+                })?;
+            let template = Template {
+                path: PathBuf::from(filename),
+                contents: data,
+            };
+            template
+                .render_to_zip(&handlebars, &environments)
+                .map_err(|e| {
+                    warn!("Unable to make zip file: {:?}", e);
+                    Status::InternalServerError
+                })
+        }
+        None => Err(Status::NotFound),
+    }
+}
+
+#[get("/envs/<sha>")]
+fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status> {
+    let mut cache = match state.environments.lock() {
+        Ok(cache) => cache,
+        Err(e) => {
+            warn!("Unable to lock cache: {:?}", e);
+            return Err(Status::NotFound);
+        }
+    };
+    if let Some(envs) = cache.get(&sha) {
+        let env_list = format_envs(envs);
+        Ok(json!(env_list))
+    } else {
+        match state.config_dir.lock() {
+            Ok(repo) => {
+                if let Some(sha) = repo.refresh(None, Some(&sha)) {
+                    cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
+                };
+            }
+            Err(e) => {
+                warn!("Unable to lock repository {:?}", e);
+                return Err(Status::NotFound);
+            }
+        }
+        if let Some(envs) = cache.get(&sha) {
+            let env_list = format_envs(envs);
+            Ok(json!(env_list))
+        } else {
+            Err(Status::NotFound)
+        }
+    }
+}
+
+#[get("/config/<sha>/<env>")]
+fn get_config_by_env(
+    sha: String,
+    env: String,
+    state: State<ServerState>,
+) -> Result<JsonValue, Status> {
+    let sha = format_sha(&sha);
+    match get_env(&state.environments, &state.config_dir, None, sha) {
+        Some(environments) => match environments.iter().find(|e| e.environment == env) {
+            Some(env) => Ok(json!(env)),
+            None => Err(Status::NotFound),
+        },
+        None => {
+            warn!("Error getting environments");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShaResponse {
+    head_sha: String,
+    branch_name: String,
+}
+
+#[get("/heads/<branch_name>?<remote_name>")]
+fn get_branch_sha(
+    remote_name: Option<String>,
+    branch_name: String,
+    state: State<ServerState>,
+) -> Result<Json<ShaResponse>, Status> {
+    if let Ok(config_dir) = state.config_dir.lock() {
+        if let Some(head_sha) = config_dir.find_branch_head(
+            &remote_name.unwrap_or_else(|| String::from("origin")),
+            &branch_name,
+        ) {
+            Ok(Json(ShaResponse {
+                head_sha,
+                branch_name,
+            }))
+        } else {
+            Err(Status::NotFound)
+        }
+    } else {
+        warn!("Error locking git repo");
+        Err(Status::InternalServerError)
+    }
+}
+
 fn init_cache(
-    cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
+    cache: &Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
     repo: &hogan::config::ConfigDir,
 ) -> Result<(), Error> {
     match repo {
         ConfigDir::Git { head_sha, .. } => {
-            let mut cache = cache.write().unwrap();
+            let mut cache = cache.lock().unwrap();
             info!("Initializing cache to: {}", head_sha);
             cache.insert(head_sha.clone(), repo.find(Regex::new(".+")?));
             Ok(())
@@ -321,18 +438,20 @@ fn init_cache(
 }
 
 fn get_env(
-    cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
+    cache: &Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
     repo: &Mutex<hogan::config::ConfigDir>,
     remote: Option<&str>,
     sha: &str,
-) -> Result<Vec<hogan::config::Environment>, Error> {
-    //TODO: Add logic here to get a read lock and peek at cache
-    let mut cache = match cache.write() {
+) -> Option<Vec<hogan::config::Environment>> {
+    let mut cache = match cache.lock() {
         Ok(cache) => cache,
-        Err(e) => return Err(format_err!("Unable to lock cache {}", e)),
+        Err(e) => {
+            warn!("Unable to lock cache {}", e);
+            return None;
+        }
     };
     if let Some(envs) = cache.get(sha) {
-        Ok(envs.clone())
+        Some(envs.clone())
     } else {
         match repo.lock() {
             Ok(repo) => {
@@ -340,17 +459,21 @@ fn get_env(
                     cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
                 };
             }
-            Err(e) => return Err(format_err!("Unable to lock repository {}", e)),
-        }
+            Err(e) => {
+                warn!("Unable to lock repository {}", e);
+                return None;
+            }
+        };
         if let Some(envs) = cache.get(sha) {
-            Ok(envs.clone())
+            Some(envs.clone())
         } else {
-            Err(format_err!("Unable to find the configuration sha {}", sha))
+            info!("Unable to find the configuration sha {}", sha);
+            None
         }
     }
 }
 
-fn format_envs(envs: &Vec<hogan::config::Environment>) -> Vec<HashMap<&str, &String>> {
+fn format_envs(envs: &[hogan::config::Environment]) -> Vec<HashMap<&str, &String>> {
     let mut env_list = Vec::new();
     for env in envs.iter() {
         let mut env_map = HashMap::new();
@@ -362,36 +485,6 @@ fn format_envs(envs: &Vec<hogan::config::Environment>) -> Vec<HashMap<&str, &Str
     }
 
     env_list
-}
-
-fn get_envs(
-    cache: &RwLock<LruCache<String, Vec<hogan::config::Environment>>>,
-    repo: &Mutex<hogan::config::ConfigDir>,
-    sha: &str,
-) -> Result<Response, Error> {
-    let mut cache = match cache.write() {
-        Ok(cache) => cache,
-        Err(e) => return Err(format_err!("Unable to lock cache: {}", e)),
-    };
-    if let Some(envs) = cache.get(sha) {
-        let env_list = format_envs(envs);
-        Ok(Response::json(&env_list))
-    } else {
-        match repo.lock() {
-            Ok(repo) => {
-                if let Some(sha) = repo.refresh(None, Some(sha)) {
-                    cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
-                };
-            }
-            Err(e) => return Err(format_err!("Unable to lock repository {}", e)),
-        }
-        if let Some(envs) = cache.get(sha) {
-            let env_list = format_envs(envs);
-            Ok(Response::json(&env_list))
-        } else {
-            Ok(Response::empty_404())
-        }
-    }
 }
 
 fn format_sha(sha: &str) -> &str {

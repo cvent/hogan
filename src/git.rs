@@ -1,6 +1,6 @@
 use failure::Error;
 use git2::build::RepoBuilder;
-use git2::{AutotagOption, Cred, FetchOptions, RemoteCallbacks, Repository};
+use git2::{AutotagOption, Cred, FetchOptions, Reference, RemoteCallbacks, Repository};
 use std::path::Path;
 use std::str;
 use url::Url;
@@ -107,7 +107,7 @@ fn detach_head(repo: &Repository, sha: &str) -> Result<(), Error> {
     repo.set_head_detached(sha_oid).map_err(|e| e.into())
 }
 
-fn fetch(
+pub fn fetch(
     repo: &Repository,
     remote: &str,
     ssh_key_path: Option<&Path>,
@@ -206,12 +206,21 @@ pub fn build_repo(path: &str) -> Result<Repository, Error> {
     Repository::open(path).map_err(|e| e.into())
 }
 
-pub fn get_head_sha(repo: &Repository) -> Result<String, Error> {
-    let head = repo.head()?;
-    if let Some(target) = head.target() {
+fn find_ref_sha(reference: &Reference) -> Result<String, Error> {
+    if let Some(target) = reference.target() {
         let sha = target.to_string();
         Ok(sha[..7].to_string())
     } else {
-        Err(format_err!("Unable to find HEAD of repo"))
+        Err(format_err!("Unable to find the HEAD of the branch"))
     }
+}
+
+pub fn get_head_sha(repo: &Repository) -> Result<String, Error> {
+    let head = repo.head()?;
+    find_ref_sha(&head)
+}
+
+pub fn find_branch_head(repo: &Repository, branch: &str) -> Result<String, Error> {
+    let branch_ref = repo.resolve_reference_from_short_name(branch)?;
+    find_ref_sha(&branch_ref)
 }
