@@ -28,7 +28,7 @@ tempfile = "3"
 url = "2"
 walkdir = "2"
 zip = "0.5"
-rocket = "0.4"
+rocket = { version = "0.4", default-features = false }
 rocket_contrib = "0.4"
 rocket_lamb = "0.4"
 
