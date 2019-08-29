@@ -11,7 +11,7 @@ impl HelperDef for LowercaseHelper {
         _: &'reg Handlebars,
         _: &Context,
         _: &mut RenderContext<'reg>,
-        out: &mut Output,
+        out: &mut dyn Output,
     ) -> HelperResult {
         let value = h
             .param(0)
@@ -43,5 +43,4 @@ mod test {
 
         test_against_configs(&handlebars, "{{lowercase UpperCaseString}}", "uppercase");
     }
-
 }

@@ -5,7 +5,7 @@ environment:
   global:
   # TODO This is the Rust channel that build jobs will use by default but can be
   # overridden on a case by case basis down below
-    RUST_VERSION: stable
+    RUST_VERSION: nightly
 
     # TODO Update this to match the name of your project.
     CRATE_NAME: hogan

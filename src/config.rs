@@ -238,7 +238,7 @@ impl ConfigDir {
             .collect()
     }
 
-    fn find_environments(&self, filter: Regex) -> Box<Iterator<Item = Environment>> {
+    fn find_environments(&self, filter: Regex) -> Box<dyn Iterator<Item = Environment>> {
         Box::new(
             find_file_paths(self.directory(), filter)
                 .filter_map(|p| File::open(p).ok())
@@ -247,7 +247,7 @@ impl ConfigDir {
         )
     }
 
-    fn find_environment_types(&self) -> Box<Iterator<Item = EnvironmentType>> {
+    fn find_environment_types(&self) -> Box<dyn Iterator<Item = EnvironmentType>> {
         Box::new(
             WalkDir::new(self.directory())
                 .into_iter()
@@ -266,6 +266,47 @@ impl ConfigDir {
                         })
                 }),
         )
+    }
+
+    pub fn find_branch_head(&self, remote_name: &str, branch_name: &str) -> Option<String> {
+        match self {
+            ConfigDir::File { .. } => None,
+            ConfigDir::Git {
+                directory,
+                ssh_key_path,
+                url,
+                ..
+            } => {
+                let git_repo = match git::build_repo(directory.to_str().unwrap()) {
+                    Ok(repo) => repo,
+                    Err(e) => {
+                        error!(
+                            "Error: {} \n Unable to find the git repo: {}",
+                            e,
+                            directory.to_str().unwrap()
+                        );
+                        return None;
+                    }
+                };
+
+                match git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url)) {
+                    Err(e) => {
+                        warn!("Error updating git repo: {:?}", e);
+                        return None;
+                    }
+                    Ok(()) => (),
+                }
+
+                match git::find_branch_head(&git_repo, &format!("{}/{}", remote_name, branch_name))
+                {
+                    Ok(sha) => Some(sha),
+                    Err(e) => {
+                        warn!("Unable to find branch: {:?}", e);
+                        None
+                    }
+                }
+            }
+        }
     }
 }
 

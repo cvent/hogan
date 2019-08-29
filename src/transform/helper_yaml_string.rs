@@ -13,7 +13,7 @@ impl HelperDef for YamlStringHelper {
         _: &'reg Handlebars,
         _: &Context,
         _: &mut RenderContext<'reg>,
-        out: &mut Output,
+        out: &mut dyn Output,
     ) -> HelperResult {
         let value = h
             .param(0)

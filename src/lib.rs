@@ -14,7 +14,7 @@ use regex::Regex;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
-pub fn find_file_paths(path: &Path, filter: Regex) -> Box<Iterator<Item = PathBuf>> {
+pub fn find_file_paths(path: &Path, filter: Regex) -> Box<dyn Iterator<Item = PathBuf>> {
     fn match_filter(entry: &DirEntry, filter: &Regex) -> bool {
         entry
             .file_name()
