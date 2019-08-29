@@ -103,11 +103,21 @@ enum AppCommand {
         #[structopt(short = "p", long = "port", default_value = "80", value_name = "PORT")]
         port: u16,
 
+        /// The address for the server to bind on
+        #[structopt(
+            short = "b",
+            long = "address",
+            default_value = "0.0.0.0",
+            value_name = "ADDRESS"
+        )]
+        address: String,
+
         /// If enabled, configures the server to handle requests as a lambda behind an API Gateway Proxy
         /// See: https://github.com/GREsau/rocket-lamb
         #[structopt(long = "lambda")]
         lambda: bool,
 
+        /// Set the size of the SHA LRU cache
         #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
         cache_size: usize,
         //TODO: Add parameter to filter environments to render templates for
@@ -215,6 +225,7 @@ fn main() -> Result<(), Error> {
         AppCommand::Server {
             common,
             port,
+            address,
             cache_size,
             lambda,
         } => {
@@ -227,13 +238,13 @@ fn main() -> Result<(), Error> {
             init_cache(&environments, &config_dir)?;
             let config_dir = Mutex::new(config_dir);
 
-            info!("Starting server on port {}", port);
+            info!("Starting server on {}:{}", address, port);
             let state = ServerState {
                 environments,
                 config_dir,
                 strict: common.strict,
             };
-            start_server(port, lambda, state)?;
+            start_server(address, port, lambda, state)?;
         }
     }
 
@@ -246,9 +257,10 @@ struct ServerState {
     strict: bool,
 }
 
-fn start_server(port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
+fn start_server(address: String, port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
     let mut config = Config::development();
     config.set_port(port);
+    config.set_address(address)?;
     let server = rocket::custom(config)
         .mount(
             "/",
