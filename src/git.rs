@@ -203,7 +203,7 @@ pub fn reset(
 }
 
 pub fn build_repo(path: &str) -> Result<Repository, Error> {
-    Repository::open(path).map_err(|e| e.into())
+    Repository::discover(path).map_err(|e| e.into())
 }
 
 fn find_ref_sha(reference: &Reference) -> Result<String, Error> {
