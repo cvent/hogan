@@ -120,7 +120,16 @@ enum AppCommand {
         /// Set the size of the SHA LRU cache
         #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
         cache_size: usize,
-        //TODO: Add parameter to filter environments to render templates for
+
+        /// Filter environments to render templates for
+        #[structopt(
+            short = "e",
+            long = "environments-filter",
+            parse(try_from_str = "App::parse_regex"),
+            default_value = ".+",
+            value_name = "REGEX"
+        )]
+        environments_regex: Regex,
     },
 }
 
@@ -228,6 +237,7 @@ fn main() -> Result<(), Error> {
             address,
             cache_size,
             lambda,
+            environments_regex,
         } => {
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
@@ -235,13 +245,14 @@ fn main() -> Result<(), Error> {
                 LruCache::<String, Vec<hogan::config::Environment>>::with_capacity(cache_size),
             );
 
-            init_cache(&environments, &config_dir)?;
+            init_cache(&environments, &environments_regex, &config_dir)?;
             let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on {}:{}", address, port);
             let state = ServerState {
                 environments,
                 config_dir,
+                environments_regex,
                 strict: common.strict,
             };
             start_server(address, port, lambda, state)?;
@@ -254,6 +265,7 @@ fn main() -> Result<(), Error> {
 struct ServerState {
     environments: Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
     config_dir: Mutex<hogan::config::ConfigDir>,
+    environments_regex: Regex,
     strict: bool,
 }
 
@@ -295,7 +307,13 @@ fn transform_env(
     state: State<ServerState>,
 ) -> Result<String, Status> {
     let sha = format_sha(&sha);
-    match get_env(&state.environments, &state.config_dir, None, sha) {
+    match get_env(
+        &state.environments,
+        &state.config_dir,
+        None,
+        sha,
+        &state.environments_regex,
+    ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => {
                 let handlebars = hogan::transform::handlebars(state.strict);
@@ -322,7 +340,13 @@ fn transform_all_envs(
     state: State<ServerState>,
 ) -> Result<Vec<u8>, Status> {
     let sha = format_sha(&sha);
-    match get_env(&state.environments, &state.config_dir, None, &sha) {
+    match get_env(
+        &state.environments,
+        &state.config_dir,
+        None,
+        &sha,
+        &state.environments_regex,
+    ) {
         Some(environments) => {
             let handlebars = hogan::transform::handlebars(state.strict);
             let mut data = String::new();
@@ -367,7 +391,7 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(None, Some(&sha)) {
-                    cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
+                    cache.insert(sha.to_owned(), repo.find(state.environments_regex.clone()));
                 };
             }
             Err(e) => {
@@ -391,7 +415,13 @@ fn get_config_by_env(
     state: State<ServerState>,
 ) -> Result<JsonValue, Status> {
     let sha = format_sha(&sha);
-    match get_env(&state.environments, &state.config_dir, None, sha) {
+    match get_env(
+        &state.environments,
+        &state.config_dir,
+        None,
+        sha,
+        &state.environments_regex,
+    ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => Ok(json!(env)),
             None => Err(Status::NotFound),
@@ -436,13 +466,14 @@ fn get_branch_sha(
 
 fn init_cache(
     cache: &Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
+    environments_regex: &Regex,
     repo: &hogan::config::ConfigDir,
 ) -> Result<(), Error> {
     match repo {
         ConfigDir::Git { head_sha, .. } => {
             let mut cache = cache.lock().unwrap();
             info!("Initializing cache to: {}", head_sha);
-            cache.insert(head_sha.clone(), repo.find(Regex::new(".+")?));
+            cache.insert(head_sha.clone(), repo.find(environments_regex.clone()));
             Ok(())
         }
         ConfigDir::File { .. } => Err(format_err!("Cannot change file based configuration")),
@@ -454,6 +485,7 @@ fn get_env(
     repo: &Mutex<hogan::config::ConfigDir>,
     remote: Option<&str>,
     sha: &str,
+    environments_regex: &Regex,
 ) -> Option<Vec<hogan::config::Environment>> {
     let mut cache = match cache.lock() {
         Ok(cache) => cache,
@@ -468,7 +500,7 @@ fn get_env(
         match repo.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
-                    cache.insert(sha.to_owned(), repo.find(Regex::new(".+").unwrap()));
+                    cache.insert(sha.to_owned(), repo.find(environments_regex.clone()));
                 };
             }
             Err(e) => {
