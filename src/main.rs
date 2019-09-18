@@ -296,7 +296,7 @@ fn start_server(address: String, port: u16, lambda: bool, state: ServerState) ->
 
 #[get("/ok")]
 fn health_check() -> Status {
-    Status::NoContent
+    Status::Ok
 }
 
 #[post("/transform/<sha>/<env>", data = "<body>")]
