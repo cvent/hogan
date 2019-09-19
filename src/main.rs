@@ -33,6 +33,7 @@ use std::sync::Mutex;
 use stderrlog;
 use structopt;
 use structopt::StructOpt;
+use dogstatsd::{Client, Options};
 
 /// Transform templates with handlebars
 #[derive(StructOpt, Debug)]
@@ -248,12 +249,14 @@ fn main() -> Result<(), Error> {
             init_cache(&environments, &environments_regex, &config_dir)?;
             let config_dir = Mutex::new(config_dir);
 
+            let dd_options = dogstatsd::Options::default();
             info!("Starting server on {}:{}", address, port);
             let state = ServerState {
                 environments,
                 config_dir,
                 environments_regex,
                 strict: common.strict,
+                dd_client: dogstatsd::Client::new(dd_options).unwrap(),
             };
             start_server(address, port, lambda, state)?;
         }
@@ -267,6 +270,7 @@ struct ServerState {
     config_dir: Mutex<hogan::config::ConfigDir>,
     environments_regex: Regex,
     strict: bool,
+    dd_client: Client,
 }
 
 fn start_server(address: String, port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
@@ -385,9 +389,13 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         }
     };
     if let Some(envs) = cache.get(&sha) {
+        let tags = &["env:sandbox", "service:hogan"];
+        state.dd_client.incr("my_counter", tags).unwrap();
+        info!("Cache hit");
         let env_list = format_envs(envs);
         Ok(json!(env_list))
     } else {
+        info!("Cache miss");
         match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(None, Some(&sha)) {
@@ -473,6 +481,7 @@ fn init_cache(
         ConfigDir::Git { head_sha, .. } => {
             let mut cache = cache.lock().unwrap();
             info!("Initializing cache to: {}", head_sha);
+            info!("Cache size: {}", cache.len());
             cache.insert(head_sha.clone(), repo.find(environments_regex.clone()));
             Ok(())
         }
@@ -495,8 +504,10 @@ fn get_env(
         }
     };
     if let Some(envs) = cache.get(sha) {
+        info!("Cache Hit");
         Some(envs.clone())
     } else {
+        info!("Cache Miss");
         match repo.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
