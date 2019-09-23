@@ -18,7 +18,7 @@ use hogan::datadogstatsd::DdMetrics;
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
 use rocket::config::Config;
-use rocket::http::{Status};
+use rocket::http::Status;
 use rocket::{Data, State};
 use rocket_contrib::json::{Json, JsonValue};
 use rocket_lamb::RocketExt;
@@ -34,12 +34,7 @@ use std::sync::Mutex;
 use stderrlog;
 use structopt;
 use structopt::StructOpt;
-// use dogstatsd::{Client, Options};
-
-
-///
 use rocket::fairing::{Fairing, Info, Kind};
-// use std::sync::atomic::{AtomicUsize, Ordering};
 use rocket::{Request, Response};
 use std::time::{ SystemTime};
 use rocket::request::{self, FromRequest};
@@ -241,7 +236,6 @@ impl App {
         PathBuf::from(shellexpand::tilde(src).into_owned())
     }
 }
-// const DDTAGS : &[&str; 2] = &["env:sandbox", "service:hogan"];
 fn main() -> Result<(), Error> {
     let opt = App::from_args();
 
@@ -336,7 +330,7 @@ struct ServerState {
     environments: Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
     config_dir: Mutex<hogan::config::ConfigDir>,
     environments_regex: Regex,
-    strict: bool
+    strict: bool,
 }
 
 fn start_server(address: String, port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
@@ -458,7 +452,6 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         }
     };
     if let Some(envs) = cache.get(&sha) {
-        // state.dd_client.incr("hogan.cache_hit.counter", DDTAGS).unwrap();
         let metrics = DdMetrics::new("hogan.cache_hit.counter", "/envs/<sha>");
         metrics.incr();
         info!("Cache hit");
@@ -466,7 +459,6 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         Ok(json!(env_list))
     } else {
         info!("Cache miss");
-        // state.dd_client.incr("hogan.cache_miss.counter", DDTAGS).unwrap();
         let metrics = DdMetrics::new("hogan.cache_miss.counter", "/envs/<sha>");
         metrics.incr();
         match state.config_dir.lock() {
@@ -580,13 +572,11 @@ fn get_env(
     };
     if let Some(envs) = cache.get(sha) {
         info!("Cache Hit");
-        // dd_client.incr("hogan.cache_hit.counter", DDTAGS).unwrap();
         let metrics = DdMetrics::new("hogan.cache_hit.counter", request_url);
         metrics.incr();
         Some(envs.clone())
     } else {
         info!("Cache Miss");
-        // dd_client.incr("hogan.cache_miss.counter", DDTAGS).unwrap();
         let metrics = DdMetrics::new("hogan.cache_miss.counter", request_url);
         metrics.incr();
         match repo.lock() {
