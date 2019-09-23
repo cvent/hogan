@@ -9,6 +9,7 @@ pub mod config;
 pub mod git;
 pub mod template;
 pub mod transform;
+pub mod datadogstatsd;
 
 use regex::Regex;
 use std::path::{Path, PathBuf};

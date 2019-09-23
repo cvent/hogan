@@ -14,10 +14,11 @@ use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
 use hogan::template::{Template, TemplateDir};
+use hogan::datadogstatsd::DdMetrics;
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
 use rocket::config::Config;
-use rocket::http::Status;
+use rocket::http::{Status};
 use rocket::{Data, State};
 use rocket_contrib::json::{Json, JsonValue};
 use rocket_lamb::RocketExt;
@@ -33,7 +34,75 @@ use std::sync::Mutex;
 use stderrlog;
 use structopt;
 use structopt::StructOpt;
-use dogstatsd::{Client, Options};
+// use dogstatsd::{Client, Options};
+
+
+///
+use rocket::fairing::{Fairing, Info, Kind};
+// use std::sync::atomic::{AtomicUsize, Ordering};
+use rocket::{Request, Response};
+use std::time::{ SystemTime};
+use rocket::request::{self, FromRequest};
+use rocket::Outcome;
+
+/// Fairing for timing requests.
+pub struct RequestTimer;
+
+/// Value stored in request-local state.
+#[derive(Copy, Clone)]
+struct TimerStart(Option<SystemTime>);
+
+impl Fairing for RequestTimer {
+    fn info(&self) -> Info {
+        Info {
+            name: "Request Timer",
+            kind: Kind::Request | Kind::Response
+        }
+    }
+
+    /// Stores the start time of the request in request-local state.
+    fn on_request(&self, request: &mut Request, _: &Data) {
+        // Store a `TimerStart` instead of directly storing a `SystemTime`
+        // to ensure that this usage doesn't conflict with anything else
+        // that might store a `SystemTime` in request-local cache.
+        if request.uri().path() != "/ok" {
+           request.local_cache(|| TimerStart(Some(SystemTime::now())));
+        }
+    }
+
+    /// Adds a header to the response indicating how long the server took to
+    /// process the request.
+    fn on_response(&self, request: &Request, response: &mut Response) {
+        info!("request uri: {}",request.uri().path());
+        if request.uri().path() != "/ok" {
+            let start_time = request.local_cache(|| TimerStart(None));
+            if let Some(Ok(duration)) = start_time.0.map(|st| st.elapsed()) {
+                let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
+                info!("Request duration: {} ms", ms);
+                let metrics = DdMetrics::new("hogan.request_time.gauge", request.uri().path());
+                metrics.gauge(&ms.to_string());
+                response.set_raw_header("X-Response-Time", format!("{} ms", ms));
+            }
+        }
+    }
+}
+
+/// Request guard used to retrieve the start time of a request.
+#[derive(Copy, Clone)]
+pub struct StartTime(pub SystemTime);
+
+// Allows a route to access the time a request was initiated.
+impl<'a, 'r> FromRequest<'a, 'r> for StartTime {
+    type Error = ();
+
+    fn from_request(request: &'a Request<'r>) -> request::Outcome<StartTime, ()> {
+        match *request.local_cache(|| TimerStart(None)) {
+            TimerStart(Some(time)) => Outcome::Success(StartTime(time)),
+            TimerStart(None) => Outcome::Failure((Status::InternalServerError, ())),
+        }
+    }
+}
+
 
 /// Transform templates with handlebars
 #[derive(StructOpt, Debug)]
@@ -172,7 +241,7 @@ impl App {
         PathBuf::from(shellexpand::tilde(src).into_owned())
     }
 }
-
+// const DDTAGS : &[&str; 2] = &["env:sandbox", "service:hogan"];
 fn main() -> Result<(), Error> {
     let opt = App::from_args();
 
@@ -249,14 +318,12 @@ fn main() -> Result<(), Error> {
             init_cache(&environments, &environments_regex, &config_dir)?;
             let config_dir = Mutex::new(config_dir);
 
-            let dd_options = dogstatsd::Options::default();
             info!("Starting server on {}:{}", address, port);
             let state = ServerState {
                 environments,
                 config_dir,
                 environments_regex,
                 strict: common.strict,
-                dd_client: dogstatsd::Client::new(dd_options).unwrap(),
             };
             start_server(address, port, lambda, state)?;
         }
@@ -269,8 +336,7 @@ struct ServerState {
     environments: Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
     config_dir: Mutex<hogan::config::ConfigDir>,
     environments_regex: Regex,
-    strict: bool,
-    dd_client: Client,
+    strict: bool
 }
 
 fn start_server(address: String, port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
@@ -289,6 +355,7 @@ fn start_server(address: String, port: u16, lambda: bool, state: ServerState) ->
                 get_branch_sha,
             ],
         )
+        .attach(RequestTimer)
         .manage(state);
     if lambda {
         server.lambda().launch();
@@ -300,7 +367,7 @@ fn start_server(address: String, port: u16, lambda: bool, state: ServerState) ->
 
 #[get("/ok")]
 fn health_check() -> Status {
-    Status::NoContent
+    Status::Ok
 }
 
 #[post("/transform/<sha>/<env>", data = "<body>")]
@@ -317,6 +384,7 @@ fn transform_env(
         None,
         sha,
         &state.environments_regex,
+        "/transform/<sha>/<env>",
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => {
@@ -350,6 +418,7 @@ fn transform_all_envs(
         None,
         &sha,
         &state.environments_regex,
+        "/transform/<sha>?<filename>",
     ) {
         Some(environments) => {
             let handlebars = hogan::transform::handlebars(state.strict);
@@ -389,13 +458,17 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         }
     };
     if let Some(envs) = cache.get(&sha) {
-        let tags = &["env:sandbox", "service:hogan"];
-        state.dd_client.incr("my_counter", tags).unwrap();
+        // state.dd_client.incr("hogan.cache_hit.counter", DDTAGS).unwrap();
+        let metrics = DdMetrics::new("hogan.cache_hit.counter", "/envs/<sha>");
+        metrics.incr();
         info!("Cache hit");
         let env_list = format_envs(envs);
         Ok(json!(env_list))
     } else {
         info!("Cache miss");
+        // state.dd_client.incr("hogan.cache_miss.counter", DDTAGS).unwrap();
+        let metrics = DdMetrics::new("hogan.cache_miss.counter", "/envs/<sha>");
+        metrics.incr();
         match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(None, Some(&sha)) {
@@ -429,6 +502,7 @@ fn get_config_by_env(
         None,
         sha,
         &state.environments_regex,
+        "/config/<sha>/<env>",
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => Ok(json!(env)),
@@ -481,7 +555,7 @@ fn init_cache(
         ConfigDir::Git { head_sha, .. } => {
             let mut cache = cache.lock().unwrap();
             info!("Initializing cache to: {}", head_sha);
-            info!("Cache size: {}", cache.len());
+
             cache.insert(head_sha.clone(), repo.find(environments_regex.clone()));
             Ok(())
         }
@@ -495,6 +569,7 @@ fn get_env(
     remote: Option<&str>,
     sha: &str,
     environments_regex: &Regex,
+    request_url: &str,
 ) -> Option<Vec<hogan::config::Environment>> {
     let mut cache = match cache.lock() {
         Ok(cache) => cache,
@@ -505,9 +580,15 @@ fn get_env(
     };
     if let Some(envs) = cache.get(sha) {
         info!("Cache Hit");
+        // dd_client.incr("hogan.cache_hit.counter", DDTAGS).unwrap();
+        let metrics = DdMetrics::new("hogan.cache_hit.counter", request_url);
+        metrics.incr();
         Some(envs.clone())
     } else {
         info!("Cache Miss");
+        // dd_client.incr("hogan.cache_miss.counter", DDTAGS).unwrap();
+        let metrics = DdMetrics::new("hogan.cache_miss.counter", request_url);
+        metrics.incr();
         match repo.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
