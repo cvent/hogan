@@ -40,6 +40,8 @@ use std::time::{ SystemTime};
 use rocket::request::{self, FromRequest};
 use rocket::Outcome;
 
+// static CustomMetrics: DdMetrics = DdMetrics::new();
+
 /// Fairing for timing requests.
 pub struct RequestTimer;
 
@@ -74,8 +76,8 @@ impl Fairing for RequestTimer {
             if let Some(Ok(duration)) = start_time.0.map(|st| st.elapsed()) {
                 let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
                 info!("Request duration: {} ms", ms);
-                let metrics = DdMetrics::new("hogan.request_time.gauge", request.uri().path());
-                metrics.gauge(&ms.to_string());
+                let metrics = DdMetrics::new();
+                metrics.gauge(&ms.to_string(),"hogan.request_time.gauge", request.uri().path());
                 response.set_raw_header("X-Response-Time", format!("{} ms", ms));
             }
         }
@@ -221,6 +223,7 @@ struct AppCommon {
 }
 
 impl App {
+
     fn config_regex(environment: &Regex) -> Result<Regex, Error> {
         App::parse_regex(&format!("config\\.{}\\.json$", environment))
     }
@@ -318,6 +321,7 @@ fn main() -> Result<(), Error> {
                 config_dir,
                 environments_regex,
                 strict: common.strict,
+                dd_metrics: DdMetrics::new(),
             };
             start_server(address, port, lambda, state)?;
         }
@@ -331,6 +335,7 @@ struct ServerState {
     config_dir: Mutex<hogan::config::ConfigDir>,
     environments_regex: Regex,
     strict: bool,
+    dd_metrics: DdMetrics,
 }
 
 fn start_server(address: String, port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
@@ -379,6 +384,7 @@ fn transform_env(
         sha,
         &state.environments_regex,
         "/transform/<sha>/<env>",
+        &state.dd_metrics,
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => {
@@ -413,6 +419,7 @@ fn transform_all_envs(
         &sha,
         &state.environments_regex,
         "/transform/<sha>?<filename>",
+        &state.dd_metrics,
     ) {
         Some(environments) => {
             let handlebars = hogan::transform::handlebars(state.strict);
@@ -452,15 +459,14 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         }
     };
     if let Some(envs) = cache.get(&sha) {
-        let metrics = DdMetrics::new("hogan.cache_hit.counter", "/envs/<sha>");
-        metrics.incr();
+        state.dd_metrics.incr("hogan.cache_hit.counter","/envs/<sha>");
         info!("Cache hit");
         let env_list = format_envs(envs);
         Ok(json!(env_list))
     } else {
         info!("Cache miss");
-        let metrics = DdMetrics::new("hogan.cache_miss.counter", "/envs/<sha>");
-        metrics.incr();
+        state.dd_metrics.incr("hogan.cache_miss.counter", "/envs/<sha>");
+        // metrics.incr();
         match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(None, Some(&sha)) {
@@ -495,6 +501,7 @@ fn get_config_by_env(
         sha,
         &state.environments_regex,
         "/config/<sha>/<env>",
+        &state.dd_metrics,
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => Ok(json!(env)),
@@ -562,6 +569,7 @@ fn get_env(
     sha: &str,
     environments_regex: &Regex,
     request_url: &str,
+    dd_metrics: &DdMetrics,
 ) -> Option<Vec<hogan::config::Environment>> {
     let mut cache = match cache.lock() {
         Ok(cache) => cache,
@@ -572,13 +580,13 @@ fn get_env(
     };
     if let Some(envs) = cache.get(sha) {
         info!("Cache Hit");
-        let metrics = DdMetrics::new("hogan.cache_hit.counter", request_url);
-        metrics.incr();
+        dd_metrics.incr("hogan.cache_hit.counter", request_url);
+        // metrics.incr();
         Some(envs.clone())
     } else {
         info!("Cache Miss");
-        let metrics = DdMetrics::new("hogan.cache_miss.counter", request_url);
-        metrics.incr();
+        dd_metrics.incr("hogan.cache_miss.counter", request_url);
+        // metrics.incr();
         match repo.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
