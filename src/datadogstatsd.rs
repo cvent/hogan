@@ -1,7 +1,6 @@
 use dogstatsd::{Client, Options};
 use std::env;
-// use std::hash::{Hash, Hasher};
-// use std::collections::HashMap;
+
 pub struct  DdMetrics{
     default_tags: [String; 2],
     client: Client
@@ -65,4 +64,20 @@ impl DdMetrics {
         info!("{} dd metrics failed with error {}", name, err)
     }
 
+}
+
+pub enum CustomMetrics {
+    CacheMiss,
+    CacheHit,
+    RequestTime
+}
+
+impl CustomMetrics {
+    pub fn metrics_name(self) -> &'static str {
+        match self {
+            CustomMetrics::CacheMiss => "hogan.cache_miss.counter",
+            CustomMetrics::CacheHit => "hogan.cache_hit.counter",
+            CustomMetrics::RequestTime => "hogan.request_time.gauge",
+        }
+    }
 }

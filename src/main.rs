@@ -14,7 +14,7 @@ use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
 use hogan::template::{Template, TemplateDir};
-use hogan::datadogstatsd::DdMetrics;
+use hogan::datadogstatsd::{DdMetrics,CustomMetrics};
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
 use rocket::config::Config;
@@ -77,7 +77,7 @@ impl Fairing for RequestTimer {
                 let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
                 info!("Request duration: {} ms", ms);
                 let metrics = DdMetrics::new();
-                metrics.gauge(&ms.to_string(),"hogan.request_time.gauge", request.uri().path());
+                metrics.gauge(&ms.to_string(),CustomMetrics::RequestTime.metrics_name(), request.uri().path());
                 response.set_raw_header("X-Response-Time", format!("{} ms", ms));
             }
         }
@@ -459,13 +459,13 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         }
     };
     if let Some(envs) = cache.get(&sha) {
-        state.dd_metrics.incr("hogan.cache_hit.counter","/envs/<sha>");
+        state.dd_metrics.incr(CustomMetrics::CacheHit.metrics_name(),"/envs/<sha>");
         info!("Cache hit");
         let env_list = format_envs(envs);
         Ok(json!(env_list))
     } else {
         info!("Cache miss");
-        state.dd_metrics.incr("hogan.cache_miss.counter", "/envs/<sha>");
+        state.dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), "/envs/<sha>");
         // metrics.incr();
         match state.config_dir.lock() {
             Ok(repo) => {
@@ -580,12 +580,12 @@ fn get_env(
     };
     if let Some(envs) = cache.get(sha) {
         info!("Cache Hit");
-        dd_metrics.incr("hogan.cache_hit.counter", request_url);
+        dd_metrics.incr(CustomMetrics::CacheHit.metrics_name(),  request_url);
         // metrics.incr();
         Some(envs.clone())
     } else {
         info!("Cache Miss");
-        dd_metrics.incr("hogan.cache_miss.counter", request_url);
+        dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
         // metrics.incr();
         match repo.lock() {
             Ok(repo) => {
