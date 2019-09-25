@@ -77,7 +77,7 @@ impl Fairing for RequestTimer {
                 let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
                 info!("Request duration: {} ms", ms);
                 let metrics = DdMetrics::new();
-                metrics.gauge(&ms.to_string(),CustomMetrics::RequestTime.metrics_name(), request.uri().path());
+                metrics.gauge(CustomMetrics::RequestTime.metrics_name(), request.uri().path(), &ms.to_string());
                 response.set_raw_header("X-Response-Time", format!("{} ms", ms));
             }
         }
@@ -377,13 +377,14 @@ fn transform_env(
     state: State<ServerState>,
 ) -> Result<String, Status> {
     let sha = format_sha(&sha);
+    let uri = format!("/transform/{}/{}", &sha, &env);
     match get_env(
         &state.environments,
         &state.config_dir,
         None,
         sha,
         &state.environments_regex,
-        "/transform/<sha>/<env>",
+        &uri,
         &state.dd_metrics,
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
@@ -412,13 +413,14 @@ fn transform_all_envs(
     state: State<ServerState>,
 ) -> Result<Vec<u8>, Status> {
     let sha = format_sha(&sha);
+    let uri = format!("/transform/{}?{}", &sha,&filename);
     match get_env(
         &state.environments,
         &state.config_dir,
         None,
         &sha,
         &state.environments_regex,
-        "/transform/<sha>?<filename>",
+        &uri,
         &state.dd_metrics,
     ) {
         Some(environments) => {
@@ -458,14 +460,16 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
             return Err(Status::NotFound);
         }
     };
+    let uri = format!("/envs/{}", &sha);
+    info!("uri: {}",uri);
     if let Some(envs) = cache.get(&sha) {
-        state.dd_metrics.incr(CustomMetrics::CacheHit.metrics_name(),"/envs/<sha>");
+        state.dd_metrics.incr(CustomMetrics::CacheHit.metrics_name(),&uri);
         info!("Cache hit");
         let env_list = format_envs(envs);
         Ok(json!(env_list))
     } else {
         info!("Cache miss");
-        state.dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), "/envs/<sha>");
+        state.dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), &uri);
         // metrics.incr();
         match state.config_dir.lock() {
             Ok(repo) => {
@@ -494,13 +498,14 @@ fn get_config_by_env(
     state: State<ServerState>,
 ) -> Result<JsonValue, Status> {
     let sha = format_sha(&sha);
+    let uri = format!("/config/{}/{}", &sha, &env);
     match get_env(
         &state.environments,
         &state.config_dir,
         None,
         sha,
         &state.environments_regex,
-        "/config/<sha>/<env>",
+        &uri,
         &state.dd_metrics,
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
