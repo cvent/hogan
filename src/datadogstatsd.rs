@@ -5,7 +5,6 @@ pub struct  DdMetrics{
     default_tags: [String; 2],
     client: Client
 }
-
 impl Default for DdMetrics {
     fn default() -> Self {
         let dd_options = Options::default();
