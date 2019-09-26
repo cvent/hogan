@@ -197,6 +197,11 @@ enum AppCommand {
             value_name = "REGEX"
         )]
         environments_regex: Regex,
+
+
+        /// If datadog monitoring is enabled
+        #[structopt(short = "d", long = "datadog")]
+        datadog: bool,
     },
 }
 
@@ -221,9 +226,6 @@ struct AppCommon {
     #[structopt(short = "s", long = "strict")]
     strict: bool,
 
-    /// If datadog monitoring is enabled
-    #[structopt(short = "d", long = "datadog")]
-    datadog: bool,
 }
 
 impl App {
@@ -309,6 +311,7 @@ fn main() -> Result<(), Error> {
             cache_size,
             lambda,
             environments_regex,
+            datadog,
         } => {
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
@@ -320,8 +323,8 @@ fn main() -> Result<(), Error> {
             let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on {}:{}", address, port);
-            info!("datadog monitoring is setting: {}", common.datadog);
-            let dd_metrics = match common.datadog {
+            info!("datadog monitoring is setting: {}", datadog);
+            let dd_metrics = match datadog {
                 true => Some(DdMetrics::new()),
                 false => None,
             };
@@ -332,7 +335,7 @@ fn main() -> Result<(), Error> {
                 strict: common.strict,
                 dd_metrics,
             };
-            start_server(address, port, lambda, state, common.datadog)?;
+            start_server(address, port, lambda, state, datadog)?;
         }
     }
 

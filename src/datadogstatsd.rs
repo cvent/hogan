@@ -24,7 +24,10 @@ impl DdMetrics {
                 info!("{}: {}", key, val);
                 env_tag.push_str(&val);
             }
-            Err(e) => info!("couldn't interpret {}: {}", key, e),
+            Err(e) => {
+                info!("couldn't interpret {}: {}", key, e);
+                env_tag.push_str("unknown");
+            }
         }
 
         let dd_tags = [String::from("service:hogan"), env_tag];
