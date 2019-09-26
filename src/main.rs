@@ -351,33 +351,21 @@ fn start_server(address: String, port: u16, lambda: bool, state: ServerState, dd
     let mut config = Config::development();
     config.set_port(port);
     config.set_address(address)?;
+    let routes = routes![
+        health_check,
+        get_envs,
+        get_config_by_env,
+        transform_env,
+        transform_all_envs,
+        get_branch_sha,
+    ];
     let server = if dd_enabled {
         rocket::custom(config)
-            .mount(
-                "/",
-                routes![
-                    health_check,
-                    get_envs,
-                    get_config_by_env,
-                    transform_env,
-                    transform_all_envs,
-                    get_branch_sha,
-                ],
-            )
+            .mount("/", routes,)
             .attach(RequestTimer)
     } else {
         rocket::custom(config)
-            .mount(
-                "/",
-                routes![
-                    health_check,
-                    get_envs,
-                    get_config_by_env,
-                    transform_env,
-                    transform_all_envs,
-                    get_branch_sha,
-                ],
-            )
+            .mount("/", routes,)
     }.manage(state);
     if lambda {
         server.lambda().launch();
