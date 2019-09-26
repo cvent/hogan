@@ -1,21 +1,21 @@
 use dogstatsd::{Client, Options};
 use std::env;
 
-pub struct  DdMetrics{
+pub struct DdMetrics {
     default_tags: [String; 2],
-    client: Client
+    client: Client,
 }
 impl Default for DdMetrics {
     fn default() -> Self {
         let dd_options = Options::default();
-        DdMetrics{
+        DdMetrics {
             default_tags: [String::from("service:hogan"), "env:unknown".to_string()],
             client: Client::new(dd_options).unwrap(),
         }
     }
 }
 impl DdMetrics {
-    pub fn new () -> Self {
+    pub fn new() -> Self {
         let dd_options = Options::default();
         let mut env_tag = String::from("env: ");
         let key = "ENV";
@@ -31,24 +31,27 @@ impl DdMetrics {
         }
 
         let dd_tags = [String::from("service:hogan"), env_tag];
-        DdMetrics{
+        DdMetrics {
             default_tags: dd_tags,
             client: Client::new(dd_options).unwrap(),
         }
     }
-    pub fn incr(&self, name:&str, url: &str) {
-        self.client.incr(name, self.append_url_tag(url).iter())
-        .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
+    pub fn incr(&self, name: &str, url: &str) {
+        self.client
+            .incr(name, self.append_url_tag(url).iter())
+            .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
-    pub fn decr(&self, name:&str,  url: &str){
-        self.client.incr(name, self.append_url_tag(url).iter())
-        .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
+    pub fn decr(&self, name: &str, url: &str) {
+        self.client
+            .incr(name, self.append_url_tag(url).iter())
+            .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
-    pub fn gauge(&self, name:&str,  url: &str, value: &str){
-        self.client.gauge(name, value, self.append_url_tag(url).iter())
-        .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
+    pub fn gauge(&self, name: &str, url: &str, value: &str) {
+        self.client
+            .gauge(name, value, self.append_url_tag(url).iter())
+            .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
     fn append_url_tag(&self, url: &str) -> Vec<String> {
@@ -65,13 +68,12 @@ impl DdMetrics {
     fn error_msg(&self, name: &str, err: &str) {
         info!("{} dd metrics failed with error {}", name, err)
     }
-
 }
 
 pub enum CustomMetrics {
     CacheMiss,
     CacheHit,
-    RequestTime
+    RequestTime,
 }
 
 impl CustomMetrics {

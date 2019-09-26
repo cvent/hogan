@@ -13,13 +13,17 @@ use failure::Error;
 use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
+use hogan::datadogstatsd::{CustomMetrics, DdMetrics};
 use hogan::template::{Template, TemplateDir};
-use hogan::datadogstatsd::{DdMetrics,CustomMetrics};
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
 use rocket::config::Config;
+use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::Status;
+use rocket::request::{self, FromRequest};
+use rocket::Outcome;
 use rocket::{Data, State};
+use rocket::{Request, Response};
 use rocket_contrib::json::{Json, JsonValue};
 use rocket_lamb::RocketExt;
 use serde::Serialize;
@@ -31,14 +35,10 @@ use std::io::ErrorKind::AlreadyExists;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::SystemTime;
 use stderrlog;
 use structopt;
 use structopt::StructOpt;
-use rocket::fairing::{Fairing, Info, Kind};
-use rocket::{Request, Response};
-use std::time::{ SystemTime};
-use rocket::request::{self, FromRequest};
-use rocket::Outcome;
 
 // static CustomMetrics: DdMetrics = DdMetrics::new();
 
@@ -53,7 +53,7 @@ impl Fairing for RequestTimer {
     fn info(&self) -> Info {
         Info {
             name: "Request Timer",
-            kind: Kind::Request | Kind::Response
+            kind: Kind::Request | Kind::Response,
         }
     }
 
@@ -63,21 +63,25 @@ impl Fairing for RequestTimer {
         // to ensure that this usage doesn't conflict with anything else
         // that might store a `SystemTime` in request-local cache.
         if request.uri().path() != "/ok" {
-           request.local_cache(|| TimerStart(Some(SystemTime::now())));
+            request.local_cache(|| TimerStart(Some(SystemTime::now())));
         }
     }
 
     /// Adds a header to the response indicating how long the server took to
     /// process the request.
     fn on_response(&self, request: &Request, response: &mut Response) {
-        info!("request uri: {}",request.uri().path());
+        info!("request uri: {}", request.uri().path());
         if request.uri().path() != "/ok" {
             let start_time = request.local_cache(|| TimerStart(None));
             if let Some(Ok(duration)) = start_time.0.map(|st| st.elapsed()) {
                 let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
                 info!("Request duration: {} ms", ms);
                 let metrics = DdMetrics::new();
-                metrics.gauge(CustomMetrics::RequestTime.metrics_name(), request.uri().path(), &ms.to_string());
+                metrics.gauge(
+                    CustomMetrics::RequestTime.metrics_name(),
+                    request.uri().path(),
+                    &ms.to_string(),
+                );
                 response.set_raw_header("X-Response-Time", format!("{} ms", ms));
             }
         }
@@ -99,7 +103,6 @@ impl<'a, 'r> FromRequest<'a, 'r> for StartTime {
         }
     }
 }
-
 
 /// Transform templates with handlebars
 #[derive(StructOpt, Debug)]
@@ -198,7 +201,6 @@ enum AppCommand {
         )]
         environments_regex: Regex,
 
-
         /// If datadog monitoring is enabled
         #[structopt(short = "d", long = "datadog")]
         datadog: bool,
@@ -225,11 +227,9 @@ struct AppCommon {
     /// Throw errors if values do not exist in configs
     #[structopt(short = "s", long = "strict")]
     strict: bool,
-
 }
 
 impl App {
-
     fn config_regex(environment: &Regex) -> Result<Regex, Error> {
         App::parse_regex(&format!("config\\.{}\\.json$", environment))
     }
@@ -324,9 +324,10 @@ fn main() -> Result<(), Error> {
 
             info!("Starting server on {}:{}", address, port);
             info!("datadog monitoring is setting: {}", datadog);
-            let dd_metrics = match datadog {
-                true => Some(DdMetrics::new()),
-                false => None,
+            let dd_metrics = if datadog {
+                Some(DdMetrics::new())
+            } else {
+                None
             };
             let state = ServerState {
                 environments,
@@ -350,7 +351,13 @@ struct ServerState {
     dd_metrics: Option<DdMetrics>,
 }
 
-fn start_server(address: String, port: u16, lambda: bool, state: ServerState, dd_enabled: bool) -> Result<(), Error> {
+fn start_server(
+    address: String,
+    port: u16,
+    lambda: bool,
+    state: ServerState,
+    dd_enabled: bool,
+) -> Result<(), Error> {
     let mut config = Config::development();
     config.set_port(port);
     config.set_address(address)?;
@@ -364,12 +371,12 @@ fn start_server(address: String, port: u16, lambda: bool, state: ServerState, dd
     ];
     let server = if dd_enabled {
         rocket::custom(config)
-            .mount("/", routes,)
+            .mount("/", routes)
             .attach(RequestTimer)
     } else {
-        rocket::custom(config)
-            .mount("/", routes,)
-    }.manage(state);
+        rocket::custom(config).mount("/", routes)
+    }
+    .manage(state);
     if lambda {
         server.lambda().launch();
     } else {
@@ -399,7 +406,7 @@ fn transform_env(
         sha,
         &state.environments_regex,
         &uri,
-        &state.dd_metrics.as_ref(),
+        state.dd_metrics.as_ref(),
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => {
@@ -427,7 +434,7 @@ fn transform_all_envs(
     state: State<ServerState>,
 ) -> Result<Vec<u8>, Status> {
     let sha = format_sha(&sha);
-    let uri = format!("/transform/{}?{}", &sha,&filename);
+    let uri = format!("/transform/{}?{}", &sha, &filename);
     match get_env(
         &state.environments,
         &state.config_dir,
@@ -435,7 +442,7 @@ fn transform_all_envs(
         &sha,
         &state.environments_regex,
         &uri,
-        &state.dd_metrics.as_ref(),
+        state.dd_metrics.as_ref(),
     ) {
         Some(environments) => {
             let handlebars = hogan::transform::handlebars(state.strict);
@@ -475,13 +482,10 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         }
     };
     let uri = format!("/envs/{}", &sha);
-    info!("uri: {}",uri);
+    info!("uri: {}", uri);
     if let Some(envs) = cache.get(&sha) {
-        match &state.dd_metrics {
-            Some(custom_metrics) => {
-                custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(),&uri);
-            }
-            None => {}
+        if let Some(custom_metrics) = &state.dd_metrics {
+            custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), &uri);
         }
         info!("Cache hit");
         let env_list = format_envs(envs);
@@ -489,11 +493,8 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
     } else {
         info!("Cache miss");
         // state.dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), &uri);
-        match &state.dd_metrics {
-            Some(custom_metrics) => {
-                custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(),&uri);
-            }
-            None => {}
+        if let Some(custom_metrics) = &state.dd_metrics {
+            custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), &uri);
         }
         match state.config_dir.lock() {
             Ok(repo) => {
@@ -530,7 +531,7 @@ fn get_config_by_env(
         sha,
         &state.environments_regex,
         &uri,
-        &state.dd_metrics.as_ref(),
+        state.dd_metrics.as_ref(),
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => Ok(json!(env)),
@@ -598,7 +599,7 @@ fn get_env(
     sha: &str,
     environments_regex: &Regex,
     request_url: &str,
-    dd_metrics: &Option<&DdMetrics>,
+    dd_metrics: Option<&DdMetrics>,
 ) -> Option<Vec<hogan::config::Environment>> {
     let mut cache = match cache.lock() {
         Ok(cache) => cache,
@@ -609,21 +610,14 @@ fn get_env(
     };
     if let Some(envs) = cache.get(sha) {
         info!("Cache Hit");
-        match dd_metrics {
-            Some(custom_metrics) => {
-                custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(),request_url);
-            }
-            None => {}
+        if let Some(custom_metrics) = dd_metrics {
+            custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), request_url);
         }
         Some(envs.clone())
     } else {
         info!("Cache Miss");
-        //dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
-        match dd_metrics {
-            Some(custom_metrics) => {
-                custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(),request_url);
-            }
-            None => {}
+        if let Some(custom_metrics) = dd_metrics {
+            custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
         }
         match repo.lock() {
             Ok(repo) => {
