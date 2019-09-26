@@ -9,7 +9,7 @@ impl Default for DdMetrics {
     fn default() -> Self {
         let dd_options = Options::default();
         DdMetrics{
-            default_tags: [String::from("service:hogan"), "env:unknow".to_string()],
+            default_tags: [String::from("service:hogan"), "env:unknown".to_string()],
             client: Client::new(dd_options).unwrap(),
         }
     }

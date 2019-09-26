@@ -220,6 +220,10 @@ struct AppCommon {
     /// Throw errors if values do not exist in configs
     #[structopt(short = "s", long = "strict")]
     strict: bool,
+
+    /// If datadog monitoring is enabled
+    #[structopt(short = "d", long = "datadog")]
+    datadog: bool,
 }
 
 impl App {
@@ -316,14 +320,19 @@ fn main() -> Result<(), Error> {
             let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on {}:{}", address, port);
+            info!("datadog monitoring is setting: {}", common.datadog);
+            let dd_metrics = match common.datadog {
+                true => Some(DdMetrics::new()),
+                false => None,
+            };
             let state = ServerState {
                 environments,
                 config_dir,
                 environments_regex,
                 strict: common.strict,
-                dd_metrics: DdMetrics::new(),
+                dd_metrics,
             };
-            start_server(address, port, lambda, state)?;
+            start_server(address, port, lambda, state, common.datadog)?;
         }
     }
 
@@ -335,27 +344,41 @@ struct ServerState {
     config_dir: Mutex<hogan::config::ConfigDir>,
     environments_regex: Regex,
     strict: bool,
-    dd_metrics: DdMetrics,
+    dd_metrics: Option<DdMetrics>,
 }
 
-fn start_server(address: String, port: u16, lambda: bool, state: ServerState) -> Result<(), Error> {
+fn start_server(address: String, port: u16, lambda: bool, state: ServerState, dd_enabled: bool) -> Result<(), Error> {
     let mut config = Config::development();
     config.set_port(port);
     config.set_address(address)?;
-    let server = rocket::custom(config)
-        .mount(
-            "/",
-            routes![
-                health_check,
-                get_envs,
-                get_config_by_env,
-                transform_env,
-                transform_all_envs,
-                get_branch_sha,
-            ],
-        )
-        .attach(RequestTimer)
-        .manage(state);
+    let server = if dd_enabled {
+        rocket::custom(config)
+            .mount(
+                "/",
+                routes![
+                    health_check,
+                    get_envs,
+                    get_config_by_env,
+                    transform_env,
+                    transform_all_envs,
+                    get_branch_sha,
+                ],
+            )
+            .attach(RequestTimer)
+    } else {
+        rocket::custom(config)
+            .mount(
+                "/",
+                routes![
+                    health_check,
+                    get_envs,
+                    get_config_by_env,
+                    transform_env,
+                    transform_all_envs,
+                    get_branch_sha,
+                ],
+            )
+    }.manage(state);
     if lambda {
         server.lambda().launch();
     } else {
@@ -385,7 +408,7 @@ fn transform_env(
         sha,
         &state.environments_regex,
         &uri,
-        &state.dd_metrics,
+        &state.dd_metrics.as_ref(),
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => {
@@ -421,7 +444,7 @@ fn transform_all_envs(
         &sha,
         &state.environments_regex,
         &uri,
-        &state.dd_metrics,
+        &state.dd_metrics.as_ref(),
     ) {
         Some(environments) => {
             let handlebars = hogan::transform::handlebars(state.strict);
@@ -463,14 +486,24 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
     let uri = format!("/envs/{}", &sha);
     info!("uri: {}",uri);
     if let Some(envs) = cache.get(&sha) {
-        state.dd_metrics.incr(CustomMetrics::CacheHit.metrics_name(),&uri);
+        match &state.dd_metrics {
+            Some(custom_metrics) => {
+                custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(),&uri);
+            }
+            None => {}
+        }
         info!("Cache hit");
         let env_list = format_envs(envs);
         Ok(json!(env_list))
     } else {
         info!("Cache miss");
-        state.dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), &uri);
-        // metrics.incr();
+        // state.dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), &uri);
+        match &state.dd_metrics {
+            Some(custom_metrics) => {
+                custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(),&uri);
+            }
+            None => {}
+        }
         match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(None, Some(&sha)) {
@@ -506,7 +539,7 @@ fn get_config_by_env(
         sha,
         &state.environments_regex,
         &uri,
-        &state.dd_metrics,
+        &state.dd_metrics.as_ref(),
     ) {
         Some(environments) => match environments.iter().find(|e| e.environment == env) {
             Some(env) => Ok(json!(env)),
@@ -574,7 +607,7 @@ fn get_env(
     sha: &str,
     environments_regex: &Regex,
     request_url: &str,
-    dd_metrics: &DdMetrics,
+    dd_metrics: &Option<&DdMetrics>,
 ) -> Option<Vec<hogan::config::Environment>> {
     let mut cache = match cache.lock() {
         Ok(cache) => cache,
@@ -585,13 +618,22 @@ fn get_env(
     };
     if let Some(envs) = cache.get(sha) {
         info!("Cache Hit");
-        dd_metrics.incr(CustomMetrics::CacheHit.metrics_name(),  request_url);
-        // metrics.incr();
+        match dd_metrics {
+            Some(custom_metrics) => {
+                custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(),request_url);
+            }
+            None => {}
+        }
         Some(envs.clone())
     } else {
         info!("Cache Miss");
-        dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
-        // metrics.incr();
+        //dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
+        match dd_metrics {
+            Some(custom_metrics) => {
+                custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(),request_url);
+            }
+            None => {}
+        }
         match repo.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
