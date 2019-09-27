@@ -12,17 +12,13 @@ impl HelperDef for OrHelper {
         rc: &mut RenderContext<'reg>,
         out: &mut dyn Output,
     ) -> HelperResult {
-        let lvalue = h
-            .param(0)
-            .ok_or_else(|| RenderError::new("Left param not found for helper \"or\""))?
-            .value();
-        let rvalue = h
-            .param(1)
-            .ok_or_else(|| RenderError::new("Right param not found for helper \"or\""))?
-            .value();
 
-        let comparison = lvalue.as_str().map_or(false, |v| !v.is_empty())
-            || rvalue.as_str().map_or(false, |v| !v.is_empty());
+
+        if h.params().len() < 2 {
+          RenderError::new("'or' requires at least 2 parameters");
+        }
+
+        let comparison = h.params().into_iter().any(|p| p.value().as_str().map_or(false, |v| !v.is_empty()));
 
         if h.is_block() {
             let template = if comparison {
@@ -73,6 +69,10 @@ mod test {
             (
                 r#"{{#if (or (eq Region.Key null) (eq Region.Key "NO"))}}{{else}}Bar{{/if}}"#,
                 "Bar",
+            ),
+            (
+                r#"{{#or (eq Region.Key "NO") (eq Region.Key "TEST2") (eq Region.Key "TEST")}}Foo{{/or}}"#,
+                "Foo",
             ),
         ];
 
