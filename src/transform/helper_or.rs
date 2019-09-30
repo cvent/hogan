@@ -15,7 +15,7 @@ impl HelperDef for OrHelper {
 
 
         if h.params().len() < 2 {
-          RenderError::new("'or' requires at least 2 parameters");
+          Err(RenderError::new("'or' requires at least 2 parameters"))?;
         }
 
         let comparison = h.params().into_iter().any(|p| p.value().as_str().map_or(false, |v| !v.is_empty()));
@@ -46,6 +46,7 @@ mod test {
     use super::*;
     use crate::transform::helper_equal::EqualHelper;
     use crate::transform::test::test_against_configs;
+    use crate::transform::test::test_error_against_configs;
 
     #[test]
     fn test_or() {
@@ -76,8 +77,19 @@ mod test {
             ),
         ];
 
+        let error_templates = vec![
+            (
+                r#"{{#or (eq Region.Key "NO") }}Foo{{/or}}"#,
+                "'or' requires at least 2 parameters",
+            ),
+        ];
+
         for (template, expected) in templates {
             test_against_configs(&handlebars, template, expected)
+        }
+
+        for (template, expected) in error_templates {
+            test_error_against_configs(&handlebars, template, expected)
         }
     }
 }
