@@ -56,4 +56,10 @@ mod test {
         assert!(null_rendered.is_ok());
         assert_eq!(&null_rendered.unwrap(), "");
     }
+
+    pub(crate) fn test_error_against_configs(handlebars: &Handlebars, template: &str, expected: &str) {
+        let config_rendered = handlebars.render_template(template, &config_fixture());
+        assert!(!config_rendered.is_ok());
+        assert_eq!(&config_rendered.unwrap_err().as_render_error().unwrap().desc, expected);
+    }
 }
