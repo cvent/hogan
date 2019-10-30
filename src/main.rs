@@ -38,6 +38,7 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 use stderrlog;
 use structopt;
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
 // static CustomMetrics: DdMetrics = DdMetrics::new();
@@ -106,15 +107,10 @@ impl<'a, 'r> FromRequest<'a, 'r> for StartTime {
 
 /// Transform templates with handlebars
 #[derive(StructOpt, Debug)]
-#[structopt(raw(setting = "structopt::clap::AppSettings::InferSubcommands"))]
+#[structopt(setting = AppSettings::InferSubcommands)]
 struct App {
     /// Sets the level of verbosity
-    #[structopt(
-        short = "v",
-        long = "verbose",
-        parse(from_occurrences),
-        raw(global = "true")
-    )]
+    #[structopt(short = "v", long = "verbose", parse(from_occurrences), global = true)]
     verbosity: usize,
 
     #[structopt(subcommand)]
@@ -133,7 +129,7 @@ enum AppCommand {
         #[structopt(
             short = "e",
             long = "environments-filter",
-            parse(try_from_str = "App::parse_regex"),
+            parse(try_from_str = App::parse_regex),
             default_value = ".+",
             value_name = "REGEX"
         )]
@@ -153,7 +149,7 @@ enum AppCommand {
         #[structopt(
             short = "f",
             long = "templates-filter",
-            parse(try_from_str = "App::parse_regex"),
+            parse(try_from_str = App::parse_regex),
             default_value = "^[^.]*(\\w+\\.)*template([-.].+)?\\.(config|ya?ml|properties)",
             value_name = "REGEX"
         )]
@@ -195,7 +191,7 @@ enum AppCommand {
         #[structopt(
             short = "e",
             long = "environments-filter",
-            parse(try_from_str = "App::parse_regex"),
+            parse(try_from_str = App::parse_regex),
             default_value = ".+",
             value_name = "REGEX"
         )]
@@ -218,7 +214,7 @@ struct AppCommon {
     #[structopt(
         short = "k",
         long = "ssh-key",
-        parse(from_str = "App::parse_path_buf"),
+        parse(from_str = App::parse_path_buf),
         default_value = "~/.ssh/id_rsa",
         value_name = "FILE"
     )]
