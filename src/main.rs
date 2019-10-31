@@ -34,6 +34,7 @@ use std::fs::OpenOptions;
 use std::io::ErrorKind::AlreadyExists;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 use stderrlog;
@@ -312,7 +313,7 @@ fn main() -> Result<(), Error> {
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
             let environments = Mutex::new(
-                LruCache::<String, Vec<hogan::config::Environment>>::with_capacity(cache_size),
+                LruCache::<String, Arc<Vec<hogan::config::Environment>>>::with_capacity(cache_size),
             );
 
             init_cache(&environments, &environments_regex, &config_dir)?;
@@ -339,8 +340,10 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
+type EnvCache = Mutex<LruCache<String, Arc<Vec<hogan::config::Environment>>>>;
+
 struct ServerState {
-    environments: Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
+    environments: EnvCache,
     config_dir: Mutex<hogan::config::ConfigDir>,
     environments_regex: Regex,
     strict: bool,
@@ -495,7 +498,7 @@ fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status>
         match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(None, Some(&sha)) {
-                    cache.insert(sha.to_owned(), repo.find(state.environments_regex.clone()));
+                    cache.insert(sha, Arc::new(repo.find(state.environments_regex.clone())));
                 };
             }
             Err(e) => {
@@ -572,7 +575,7 @@ fn get_branch_sha(
 }
 
 fn init_cache(
-    cache: &Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
+    cache: &Mutex<LruCache<String, Arc<Vec<hogan::config::Environment>>>>,
     environments_regex: &Regex,
     repo: &hogan::config::ConfigDir,
 ) -> Result<(), Error> {
@@ -581,7 +584,10 @@ fn init_cache(
             let mut cache = cache.lock().unwrap();
             info!("Initializing cache to: {}", head_sha);
 
-            cache.insert(head_sha.clone(), repo.find(environments_regex.clone()));
+            cache.insert(
+                head_sha.clone(),
+                Arc::new(repo.find(environments_regex.clone())),
+            );
             Ok(())
         }
         ConfigDir::File { .. } => Err(format_err!("Cannot change file based configuration")),
@@ -589,14 +595,14 @@ fn init_cache(
 }
 
 fn get_env(
-    cache: &Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
+    cache: &EnvCache,
     repo: &Mutex<hogan::config::ConfigDir>,
     remote: Option<&str>,
     sha: &str,
     environments_regex: &Regex,
     request_url: &str,
     dd_metrics: Option<&DdMetrics>,
-) -> Option<Vec<hogan::config::Environment>> {
+) -> Option<Arc<Vec<hogan::config::Environment>>> {
     let mut cache = match cache.lock() {
         Ok(cache) => cache,
         Err(e) => {
@@ -618,7 +624,7 @@ fn get_env(
         match repo.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
-                    cache.insert(sha.to_owned(), repo.find(environments_regex.clone()));
+                    cache.insert(sha, Arc::new(repo.find(environments_regex.clone())));
                 };
             }
             Err(e) => {

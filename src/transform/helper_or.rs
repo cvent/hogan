@@ -12,13 +12,14 @@ impl HelperDef for OrHelper {
         rc: &mut RenderContext<'reg>,
         out: &mut dyn Output,
     ) -> HelperResult {
-
-
         if h.params().len() < 2 {
-          Err(RenderError::new("'or' requires at least 2 parameters"))?;
+            return Err(RenderError::new("'or' requires at least 2 parameters"));
         }
 
-        let comparison = h.params().into_iter().any(|p| p.value().as_str().map_or(false, |v| !v.is_empty()));
+        let comparison = h
+            .params()
+            .iter()
+            .any(|p| p.value().as_str().map_or(false, |v| !v.is_empty()));
 
         if h.is_block() {
             let template = if comparison {
@@ -77,12 +78,10 @@ mod test {
             ),
         ];
 
-        let error_templates = vec![
-            (
-                r#"{{#or (eq Region.Key "NO") }}Foo{{/or}}"#,
-                "'or' requires at least 2 parameters",
-            ),
-        ];
+        let error_templates = vec![(
+            r#"{{#or (eq Region.Key "NO") }}Foo{{/or}}"#,
+            "'or' requires at least 2 parameters",
+        )];
 
         for (template, expected) in templates {
             test_against_configs(&handlebars, template, expected)
