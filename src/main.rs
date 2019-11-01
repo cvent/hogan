@@ -14,7 +14,7 @@ use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
 use hogan::datadogstatsd::{CustomMetrics, DdMetrics};
-use hogan::template::{Template, TemplateDir};
+use hogan::template::TemplateDir;
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
 use rocket::config::Config;
@@ -28,16 +28,17 @@ use rocket_contrib::json::{Json, JsonValue};
 use rocket_lamb::RocketExt;
 use serde::Serialize;
 use shellexpand;
-use std::collections::HashMap;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::ErrorKind::AlreadyExists;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 use stderrlog;
 use structopt;
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
 // static CustomMetrics: DdMetrics = DdMetrics::new();
@@ -106,15 +107,10 @@ impl<'a, 'r> FromRequest<'a, 'r> for StartTime {
 
 /// Transform templates with handlebars
 #[derive(StructOpt, Debug)]
-#[structopt(raw(setting = "structopt::clap::AppSettings::InferSubcommands"))]
+#[structopt(setting = AppSettings::InferSubcommands)]
 struct App {
     /// Sets the level of verbosity
-    #[structopt(
-        short = "v",
-        long = "verbose",
-        parse(from_occurrences),
-        raw(global = "true")
-    )]
+    #[structopt(short = "v", long = "verbose", parse(from_occurrences), global = true)]
     verbosity: usize,
 
     #[structopt(subcommand)]
@@ -133,7 +129,7 @@ enum AppCommand {
         #[structopt(
             short = "e",
             long = "environments-filter",
-            parse(try_from_str = "App::parse_regex"),
+            parse(try_from_str = App::parse_regex),
             default_value = ".+",
             value_name = "REGEX"
         )]
@@ -153,7 +149,7 @@ enum AppCommand {
         #[structopt(
             short = "f",
             long = "templates-filter",
-            parse(try_from_str = "App::parse_regex"),
+            parse(try_from_str = App::parse_regex),
             default_value = "^[^.]*(\\w+\\.)*template([-.].+)?\\.(config|ya?ml|properties)",
             value_name = "REGEX"
         )]
@@ -195,7 +191,7 @@ enum AppCommand {
         #[structopt(
             short = "e",
             long = "environments-filter",
-            parse(try_from_str = "App::parse_regex"),
+            parse(try_from_str = App::parse_regex),
             default_value = ".+",
             value_name = "REGEX"
         )]
@@ -218,7 +214,7 @@ struct AppCommon {
     #[structopt(
         short = "k",
         long = "ssh-key",
-        parse(from_str = "App::parse_path_buf"),
+        parse(from_str = App::parse_path_buf),
         default_value = "~/.ssh/id_rsa",
         value_name = "FILE"
     )]
@@ -316,10 +312,13 @@ fn main() -> Result<(), Error> {
             let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
             let environments = Mutex::new(
-                LruCache::<String, Vec<hogan::config::Environment>>::with_capacity(cache_size),
+                LruCache::<String, Arc<hogan::config::Environment>>::with_capacity(cache_size),
             );
 
-            init_cache(&environments, &environments_regex, &config_dir)?;
+            let environment_listings = Mutex::new(
+                LruCache::<String, Arc<Vec<EnvDescription>>>::with_capacity(cache_size),
+            );
+
             let config_dir = Mutex::new(config_dir);
 
             info!("Starting server on {}:{}", address, port);
@@ -331,6 +330,7 @@ fn main() -> Result<(), Error> {
             };
             let state = ServerState {
                 environments,
+                environment_listings,
                 config_dir,
                 environments_regex,
                 strict: common.strict,
@@ -343,8 +343,29 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct EnvDescription {
+    name: String,
+    #[serde(rename(serialize = "Type"))]
+    env_type: Option<String>,
+}
+
+impl From<&hogan::config::Environment> for EnvDescription {
+    fn from(env: &hogan::config::Environment) -> EnvDescription {
+        EnvDescription {
+            name: env.environment.clone(),
+            env_type: env.environment_type.clone(),
+        }
+    }
+}
+
+type EnvCache = Mutex<LruCache<String, Arc<hogan::config::Environment>>>;
+type EnvListingCache = Mutex<LruCache<String, Arc<Vec<EnvDescription>>>>;
+
 struct ServerState {
-    environments: Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
+    environments: EnvCache,
+    environment_listings: EnvListingCache,
     config_dir: Mutex<hogan::config::ConfigDir>,
     environments_regex: Regex,
     strict: bool,
@@ -404,24 +425,22 @@ fn transform_env(
         &state.config_dir,
         None,
         sha,
+        &env,
         &state.environments_regex,
         &uri,
         state.dd_metrics.as_ref(),
     ) {
-        Some(environments) => match environments.iter().find(|e| e.environment == env) {
-            Some(env) => {
-                let handlebars = hogan::transform::handlebars(state.strict);
-                let mut data = String::new();
-                body.open().read_to_string(&mut data).map_err(|e| {
-                    warn!("Unable to consume transform body: {:?}", e);
-                    Status::InternalServerError
-                })?;
-                handlebars
-                    .render_template(&data, &env.config_data)
-                    .map_err(|_| Status::BadRequest)
-            }
-            None => Err(Status::NotFound),
-        },
+        Some(env) => {
+            let handlebars = hogan::transform::handlebars(state.strict);
+            let mut data = String::new();
+            body.open().read_to_string(&mut data).map_err(|e| {
+                warn!("Unable to consume transform body: {:?}", e);
+                Status::InternalServerError
+            })?;
+            handlebars
+                .render_template(&data, &env.config_data)
+                .map_err(|_| Status::BadRequest)
+        }
         None => Err(Status::NotFound),
     }
 }
@@ -433,10 +452,16 @@ fn transform_all_envs(
     body: Data,
     state: State<ServerState>,
 ) -> Result<Vec<u8>, Status> {
-    let sha = format_sha(&sha);
-    let uri = format!("/transform/{}?{}", &sha, &filename);
-    match get_env(
-        &state.environments,
+    Err(Status::Gone)
+}
+
+#[get("/envs/<sha>")]
+fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status> {
+    let uri = format!("/envs/{}", &sha);
+    info!("uri: {}", uri);
+
+    match get_env_listing(
+        &state.environment_listings,
         &state.config_dir,
         None,
         &sha,
@@ -444,75 +469,8 @@ fn transform_all_envs(
         &uri,
         state.dd_metrics.as_ref(),
     ) {
-        Some(environments) => {
-            let handlebars = hogan::transform::handlebars(state.strict);
-            let mut data = String::new();
-            body.open()
-                .read_to_string(&mut data)
-                .map_err(|e| {
-                    warn!("Unable to consume transform body: {:?}", e);
-                    Status::InternalServerError
-                })
-                .map_err(|e| {
-                    warn!("Unable to read request body {:?}", e);
-                    Status::InternalServerError
-                })?;
-            let template = Template {
-                path: PathBuf::from(filename),
-                contents: data,
-            };
-            template
-                .render_to_zip(&handlebars, &environments)
-                .map_err(|e| {
-                    warn!("Unable to make zip file: {:?}", e);
-                    Status::InternalServerError
-                })
-        }
+        Some(envs) => Ok(json!(envs)),
         None => Err(Status::NotFound),
-    }
-}
-
-#[get("/envs/<sha>")]
-fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status> {
-    let mut cache = match state.environments.lock() {
-        Ok(cache) => cache,
-        Err(e) => {
-            warn!("Unable to lock cache: {:?}", e);
-            return Err(Status::NotFound);
-        }
-    };
-    let uri = format!("/envs/{}", &sha);
-    info!("uri: {}", uri);
-    if let Some(envs) = cache.get(&sha) {
-        if let Some(custom_metrics) = &state.dd_metrics {
-            custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), &uri);
-        }
-        info!("Cache hit");
-        let env_list = format_envs(envs);
-        Ok(json!(env_list))
-    } else {
-        info!("Cache miss");
-        // state.dd_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), &uri);
-        if let Some(custom_metrics) = &state.dd_metrics {
-            custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), &uri);
-        }
-        match state.config_dir.lock() {
-            Ok(repo) => {
-                if let Some(sha) = repo.refresh(None, Some(&sha)) {
-                    cache.insert(sha.to_owned(), repo.find(state.environments_regex.clone()));
-                };
-            }
-            Err(e) => {
-                warn!("Unable to lock repository {:?}", e);
-                return Err(Status::NotFound);
-            }
-        }
-        if let Some(envs) = cache.get(&sha) {
-            let env_list = format_envs(envs);
-            Ok(json!(env_list))
-        } else {
-            Err(Status::NotFound)
-        }
     }
 }
 
@@ -529,18 +487,13 @@ fn get_config_by_env(
         &state.config_dir,
         None,
         sha,
+        &env,
         &state.environments_regex,
         &uri,
         state.dd_metrics.as_ref(),
     ) {
-        Some(environments) => match environments.iter().find(|e| e.environment == env) {
-            Some(env) => Ok(json!(env)),
-            None => Err(Status::NotFound),
-        },
-        None => {
-            warn!("Error getting environments");
-            Err(Status::InternalServerError)
-        }
+        Some(env) => Ok(json!(env)),
+        None => Err(Status::NotFound),
     }
 }
 
@@ -575,32 +528,21 @@ fn get_branch_sha(
     }
 }
 
-fn init_cache(
-    cache: &Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
-    environments_regex: &Regex,
-    repo: &hogan::config::ConfigDir,
-) -> Result<(), Error> {
-    match repo {
-        ConfigDir::Git { head_sha, .. } => {
-            let mut cache = cache.lock().unwrap();
-            info!("Initializing cache to: {}", head_sha);
-
-            cache.insert(head_sha.clone(), repo.find(environments_regex.clone()));
-            Ok(())
-        }
-        ConfigDir::File { .. } => Err(format_err!("Cannot change file based configuration")),
-    }
+fn format_key(sha: &str, env: &str) -> String {
+    format!("{}::{}", sha, env)
 }
 
 fn get_env(
-    cache: &Mutex<LruCache<String, Vec<hogan::config::Environment>>>,
+    cache: &EnvCache,
     repo: &Mutex<hogan::config::ConfigDir>,
     remote: Option<&str>,
     sha: &str,
+    env: &str,
     environments_regex: &Regex,
     request_url: &str,
     dd_metrics: Option<&DdMetrics>,
-) -> Option<Vec<hogan::config::Environment>> {
+) -> Option<Arc<hogan::config::Environment>> {
+    let key = format_key(sha, env);
     let mut cache = match cache.lock() {
         Ok(cache) => cache,
         Err(e) => {
@@ -608,21 +550,86 @@ fn get_env(
             return None;
         }
     };
-    if let Some(envs) = cache.get(sha) {
-        info!("Cache Hit");
+    if let Some(env) = cache.get(&key) {
+        info!("Cache Hit {}", key);
         if let Some(custom_metrics) = dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), request_url);
         }
-        Some(envs.clone())
+        Some(env.clone())
     } else {
-        info!("Cache Miss");
+        info!("Cache Miss {}", key);
         if let Some(custom_metrics) = dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
         }
         match repo.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
-                    cache.insert(sha.to_owned(), repo.find(environments_regex.clone()));
+                    match repo
+                        .find(environments_regex.clone())
+                        .iter()
+                        .find(|e| e.environment == env)
+                    {
+                        Some(env) => cache.insert(key.clone(), Arc::new(env.clone())),
+                        None => {
+                            debug!("Unable to find the env {} in {}", env, sha);
+                            return None;
+                        }
+                    };
+                };
+            }
+            Err(e) => {
+                warn!("Unable to lock repository {}", e);
+                return None;
+            }
+        };
+        if let Some(envs) = cache.get(&key) {
+            Some(envs.clone())
+        } else {
+            info!("Unable to find the configuration sha {}", sha);
+            None
+        }
+    }
+}
+
+fn get_env_listing(
+    cache: &EnvListingCache,
+    repo: &Mutex<hogan::config::ConfigDir>,
+    remote: Option<&str>,
+    sha: &str,
+    environments_regex: &Regex,
+    request_url: &str,
+    dd_metrics: Option<&DdMetrics>,
+) -> Option<Arc<Vec<EnvDescription>>> {
+    let sha = format_sha(sha);
+    let mut cache = match cache.lock() {
+        Ok(cache) => cache,
+        Err(e) => {
+            warn!("Unable to lock cache {}", e);
+            return None;
+        }
+    };
+    if let Some(env) = cache.get(sha) {
+        info!("Cache Hit {}", sha);
+        if let Some(custom_metrics) = dd_metrics {
+            custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), request_url);
+        }
+        Some(env.clone())
+    } else {
+        info!("Cache Miss {}", sha);
+        if let Some(custom_metrics) = dd_metrics {
+            custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
+        }
+        match repo.lock() {
+            Ok(repo) => {
+                if let Some(sha) = repo.refresh(remote, Some(sha)) {
+                    let envs = format_envs(&repo.find(environments_regex.clone()));
+                    if !envs.is_empty() {
+                        info!("Loading envs for {}", sha);
+                        cache.insert(sha, Arc::new(envs));
+                    } else {
+                        info!("No envs found for {}", sha);
+                        return None;
+                    }
                 };
             }
             Err(e) => {
@@ -639,18 +646,8 @@ fn get_env(
     }
 }
 
-fn format_envs(envs: &[hogan::config::Environment]) -> Vec<HashMap<&str, &String>> {
-    let mut env_list = Vec::new();
-    for env in envs.iter() {
-        let mut env_map = HashMap::new();
-        env_map.insert("Name", &env.environment);
-        if let Some(environment_type) = &env.environment_type {
-            env_map.insert("Type", environment_type);
-        }
-        env_list.push(env_map);
-    }
-
-    env_list
+fn format_envs(envs: &[hogan::config::Environment]) -> Vec<EnvDescription> {
+    envs.iter().map(|e| e.into()).collect()
 }
 
 fn format_sha(sha: &str) -> &str {

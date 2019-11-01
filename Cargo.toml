@@ -1,6 +1,6 @@
 [package]
 name = "hogan"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Jonathan Morley <jmorley@cvent.com>"]
 edition = "2018"
 
@@ -18,12 +18,12 @@ itertools = "0.8"
 json-patch = "0.2"
 log = "0.4"
 regex = { version ="1", default-features = false }
-serde = "1"
+serde = {version = "1", features = ["rc"]}
 serde_derive = "1"
 serde_json = "1"
 shellexpand = "1"
 stderrlog = "0.4"
-structopt = "0.2"
+structopt = "0.3"
 tempfile = "3"
 url = "2"
 walkdir = "2"

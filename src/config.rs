@@ -120,7 +120,6 @@ impl ConfigDir {
                     Some(workdir) => workdir.join(internal_path),
                     None => bail!("No working directory found for git repository"),
                 };
-                let url = url.clone();
                 let ssh_key_path = ssh_key_path.to_owned();
 
                 Ok(ConfigDir::Git {
