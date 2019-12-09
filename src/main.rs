@@ -25,7 +25,6 @@ use rocket::Outcome;
 use rocket::{Data, State};
 use rocket::{Request, Response};
 use rocket_contrib::json::{Json, JsonValue};
-use rocket_lamb::RocketExt;
 use serde::Serialize;
 use shellexpand;
 use std::fs::File;
@@ -178,11 +177,6 @@ enum AppCommand {
         )]
         address: String,
 
-        /// If enabled, configures the server to handle requests as a lambda behind an API Gateway Proxy
-        /// See: https://github.com/GREsau/rocket-lamb
-        #[structopt(long = "lambda")]
-        lambda: bool,
-
         /// Set the size of the SHA LRU cache
         #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
         cache_size: usize,
@@ -305,7 +299,6 @@ fn main() -> Result<(), Error> {
             port,
             address,
             cache_size,
-            lambda,
             environments_regex,
             datadog,
         } => {
@@ -336,7 +329,7 @@ fn main() -> Result<(), Error> {
                 strict: common.strict,
                 dd_metrics,
             };
-            start_server(address, port, lambda, state, datadog)?;
+            start_server(address, port, state, datadog)?;
         }
     }
 
@@ -375,7 +368,6 @@ struct ServerState {
 fn start_server(
     address: String,
     port: u16,
-    lambda: bool,
     state: ServerState,
     dd_enabled: bool,
 ) -> Result<(), Error> {
@@ -389,6 +381,7 @@ fn start_server(
         transform_env,
         transform_all_envs,
         get_branch_sha,
+        get_qualified_branch_sha
     ];
     let server = if dd_enabled {
         rocket::custom(config)
@@ -398,11 +391,7 @@ fn start_server(
         rocket::custom(config).mount("/", routes)
     }
     .manage(state);
-    if lambda {
-        server.lambda().launch();
-    } else {
-        server.launch();
-    }
+    server.launch();
     Ok(())
 }
 
@@ -510,6 +499,7 @@ fn get_branch_sha(
     branch_name: String,
     state: State<ServerState>,
 ) -> Result<Json<ShaResponse>, Status> {
+    debug!("Looking up branch name {}", branch_name);
     if let Ok(config_dir) = state.config_dir.lock() {
         if let Some(head_sha) = config_dir.find_branch_head(
             &remote_name.unwrap_or_else(|| String::from("origin")),
@@ -526,6 +516,17 @@ fn get_branch_sha(
         warn!("Error locking git repo");
         Err(Status::InternalServerError)
     }
+}
+
+#[get("/heads/<branch_type>/<branch_name>?<remote_name>")]
+fn get_qualified_branch_sha(
+    remote_name: Option<String>,
+    branch_name: String,
+    branch_type: String,
+    state: State<ServerState>,
+) -> Result<Json<ShaResponse>, Status> {
+    let branch_name = format!("{}/{}", branch_type, branch_name);
+    get_branch_sha(remote_name, branch_name, state)
 }
 
 fn format_key(sha: &str, env: &str) -> String {
