@@ -44,13 +44,19 @@ impl DdMetrics {
 
     pub fn decr(&self, name: &str, url: &str) {
         self.client
-            .incr(name, self.append_url_tag(url).iter())
+            .decr(name, self.append_url_tag(url).iter())
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
     pub fn gauge(&self, name: &str, url: &str, value: &str) {
         self.client
             .gauge(name, value, self.append_url_tag(url).iter())
+            .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
+    }
+
+    pub fn time(&self, name: &str, url: &str, value: i64) {
+        self.client
+            .timing(name, value, self.append_url_tag(url).iter())
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
@@ -66,7 +72,7 @@ impl DdMetrics {
     }
 
     fn error_msg(&self, name: &str, err: &str) {
-        info!("{} dd metrics failed with error {}", name, err)
+        warn!("{} dd metrics failed with error {}", name, err)
     }
 }
 

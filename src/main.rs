@@ -78,10 +78,10 @@ impl Fairing for RequestTimer {
                 let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
                 info!("Request duration: {} ms", ms);
                 let metrics = DdMetrics::new();
-                metrics.gauge(
+                metrics.time(
                     CustomMetrics::RequestTime.metrics_name(),
                     request.uri().path(),
-                    &ms.to_string(),
+                    ms as i64,
                 );
                 response.set_raw_header("X-Response-Time", format!("{} ms", ms));
             }
