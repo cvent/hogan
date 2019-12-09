@@ -15,10 +15,12 @@ use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
 use hogan::datadogstatsd::{CustomMetrics, DdMetrics};
 use hogan::template::TemplateDir;
+use itertools::Itertools;
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
 use rocket::config::Config;
 use rocket::fairing::{Fairing, Info, Kind};
+use rocket::http::uri::Segments;
 use rocket::http::Status;
 use rocket::request::{self, FromRequest};
 use rocket::Outcome;
@@ -381,7 +383,6 @@ fn start_server(
         transform_env,
         transform_all_envs,
         get_branch_sha,
-        get_qualified_branch_sha
     ];
     let server = if dd_enabled {
         rocket::custom(config)
@@ -493,12 +494,13 @@ struct ShaResponse {
     branch_name: String,
 }
 
-#[get("/heads/<branch_name>?<remote_name>")]
+#[get("/heads/<branch_name..>?<remote_name>")]
 fn get_branch_sha(
     remote_name: Option<String>,
-    branch_name: String,
+    branch_name: Segments,
     state: State<ServerState>,
 ) -> Result<Json<ShaResponse>, Status> {
+    let branch_name = branch_name.intersperse("/").collect::<String>();
     debug!("Looking up branch name {}", branch_name);
     if let Ok(config_dir) = state.config_dir.lock() {
         if let Some(head_sha) = config_dir.find_branch_head(
@@ -516,17 +518,6 @@ fn get_branch_sha(
         warn!("Error locking git repo");
         Err(Status::InternalServerError)
     }
-}
-
-#[get("/heads/<branch_type>/<branch_name>?<remote_name>")]
-fn get_qualified_branch_sha(
-    remote_name: Option<String>,
-    branch_name: String,
-    branch_type: String,
-    state: State<ServerState>,
-) -> Result<Json<ShaResponse>, Status> {
-    let branch_name = format!("{}/{}", branch_type, branch_name);
-    get_branch_sha(remote_name, branch_name, state)
 }
 
 fn format_key(sha: &str, env: &str) -> String {
