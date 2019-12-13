@@ -52,16 +52,16 @@ matrix:
     # - env: TARGET=powerpc64le-unknown-linux-gnu
     # - env: TARGET=s390x-unknown-linux-gnu DISABLE_TESTS=1
     - env: TARGET=x86_64-unknown-linux-gnu
-      rust: nightly
+      rust: stable
     - env: TARGET=x86_64-unknown-linux-musl
-      rust: nightly
+      rust: stable
 
     # OSX
     # - env: TARGET=i686-apple-darwin
     #   os: osx
     - env: TARGET=x86_64-apple-darwin
       os: osx
-      rust: nightly
+      rust: stable
 
     # *BSD
     # - env: TARGET=i686-unknown-freebsd DISABLE_TESTS=1
@@ -113,17 +113,17 @@ deploy:
     # In this example, there are some targets that are tested using the stable
     # and nightly channels. This condition makes sure there is only one release
     # for such targets and that's generated using the stable channel
-    condition: $TRAVIS_RUST_VERSION = nightly
+    condition: $TRAVIS_RUST_VERSION = stable
     tags: true
   provider: releases
   skip_cleanup: true
 
 #  we are on nightly and the cache isn’t really helping us.
 #  we will re-add this once we are back on stable
-# cache: cargo
-# before_cache:
-#   # Travis can't cache files that are not readable by "others"
-#   - chmod -R a+r $HOME/.cargo
+cache: cargo
+before_cache:
+  # Travis can't cache files that are not readable by "others"
+  - chmod -R a+r $HOME/.cargo
 
 branches:
   only:

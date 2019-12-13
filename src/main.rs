@@ -1,15 +1,13 @@
-#![feature(proc_macro_hygiene, decl_macro)]
-
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate rocket;
-#[macro_use]
-extern crate rocket_contrib;
 
+use actix_web::dev::Service;
+use actix_web::http::header::{HeaderName, HeaderValue};
+use actix_web::{get, post, web, FromRequest, HttpResponse, HttpServer, Responder};
 use failure::Error;
+use futures::future::Future;
 use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
@@ -17,21 +15,13 @@ use hogan::datadogstatsd::{CustomMetrics, DdMetrics};
 use hogan::template::TemplateDir;
 use lru_time_cache::LruCache;
 use regex::{Regex, RegexBuilder};
-use rocket::config::Config;
-use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::Status;
-use rocket::request::{self, FromRequest};
-use rocket::Outcome;
-use rocket::{Data, State};
-use rocket::{Request, Response};
-use rocket_contrib::json::{Json, JsonValue};
-use rocket_lamb::RocketExt;
+use serde::Deserialize;
 use serde::Serialize;
 use shellexpand;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::ErrorKind::AlreadyExists;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -40,70 +30,6 @@ use stderrlog;
 use structopt;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
-
-// static CustomMetrics: DdMetrics = DdMetrics::new();
-
-/// Fairing for timing requests.
-pub struct RequestTimer;
-
-/// Value stored in request-local state.
-#[derive(Copy, Clone)]
-struct TimerStart(Option<SystemTime>);
-
-impl Fairing for RequestTimer {
-    fn info(&self) -> Info {
-        Info {
-            name: "Request Timer",
-            kind: Kind::Request | Kind::Response,
-        }
-    }
-
-    /// Stores the start time of the request in request-local state.
-    fn on_request(&self, request: &mut Request, _: &Data) {
-        // Store a `TimerStart` instead of directly storing a `SystemTime`
-        // to ensure that this usage doesn't conflict with anything else
-        // that might store a `SystemTime` in request-local cache.
-        if request.uri().path() != "/ok" {
-            request.local_cache(|| TimerStart(Some(SystemTime::now())));
-        }
-    }
-
-    /// Adds a header to the response indicating how long the server took to
-    /// process the request.
-    fn on_response(&self, request: &Request, response: &mut Response) {
-        info!("request uri: {}", request.uri().path());
-        if request.uri().path() != "/ok" {
-            let start_time = request.local_cache(|| TimerStart(None));
-            if let Some(Ok(duration)) = start_time.0.map(|st| st.elapsed()) {
-                let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
-                info!("Request duration: {} ms", ms);
-                let metrics = DdMetrics::new();
-                metrics.time(
-                    CustomMetrics::RequestTime.metrics_name(),
-                    request.uri().path(),
-                    ms as i64,
-                );
-                response.set_raw_header("X-Response-Time", format!("{} ms", ms));
-            }
-        }
-    }
-}
-
-/// Request guard used to retrieve the start time of a request.
-#[derive(Copy, Clone)]
-pub struct StartTime(pub SystemTime);
-
-// Allows a route to access the time a request was initiated.
-impl<'a, 'r> FromRequest<'a, 'r> for StartTime {
-    type Error = ();
-
-    fn from_request(request: &'a Request<'r>) -> request::Outcome<StartTime, ()> {
-        match *request.local_cache(|| TimerStart(None)) {
-            TimerStart(Some(time)) => Outcome::Success(StartTime(time)),
-            TimerStart(None) => Outcome::Failure((Status::InternalServerError, ())),
-        }
-    }
-}
 
 /// Transform templates with handlebars
 #[derive(StructOpt, Debug)]
@@ -177,11 +103,6 @@ enum AppCommand {
             value_name = "ADDRESS"
         )]
         address: String,
-
-        /// If enabled, configures the server to handle requests as a lambda behind an API Gateway Proxy
-        /// See: https://github.com/GREsau/rocket-lamb
-        #[structopt(long = "lambda")]
-        lambda: bool,
 
         /// Set the size of the SHA LRU cache
         #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
@@ -305,7 +226,6 @@ fn main() -> Result<(), Error> {
             port,
             address,
             cache_size,
-            lambda,
             environments_regex,
             datadog,
         } => {
@@ -336,7 +256,7 @@ fn main() -> Result<(), Error> {
                 strict: common.strict,
                 dd_metrics,
             };
-            start_server(address, port, lambda, state, datadog)?;
+            start_server(address, port, state, datadog)?;
         }
     }
 
@@ -375,125 +295,126 @@ struct ServerState {
 fn start_server(
     address: String,
     port: u16,
-    lambda: bool,
     state: ServerState,
     dd_enabled: bool,
 ) -> Result<(), Error> {
-    let mut config = Config::development();
-    config.set_port(port);
-    config.set_address(address)?;
-    let routes = routes![
-        health_check,
-        get_envs,
-        get_config_by_env,
-        transform_env,
-        transform_all_envs,
-        get_branch_sha,
-    ];
-    let server = if dd_enabled {
-        rocket::custom(config)
-            .mount("/", routes)
-            .attach(RequestTimer)
-    } else {
-        rocket::custom(config).mount("/", routes)
-    }
-    .manage(state);
-    if lambda {
-        server.lambda().launch();
-    } else {
-        server.launch();
-    }
+    let binding = format!("{}:{}", address, port);
+    let server_state = web::Data::new(state);
+
+    HttpServer::new(move || {
+        actix_web::App::new()
+            .register_data(server_state.clone())
+            .wrap_fn(move |req, srv| {
+                let start_time = if req.path() != "/ok" {
+                    Some(SystemTime::now())
+                } else {
+                    None
+                };
+                srv.call(req).map(move |mut res| {
+                    if let Some(time) = start_time {
+                        if let Ok(duration) = time.elapsed() {
+                            let ms = duration.as_millis();
+                            debug!("Request duration: {}", ms);
+                            if dd_enabled {
+                                let metrics = DdMetrics::new();
+                                metrics.time(
+                                    CustomMetrics::RequestTime.metrics_name(),
+                                    "route", //TODO: Normalize the matched URI
+                                    ms as i64,
+                                );
+                            };
+                            res.headers_mut().insert(
+                                HeaderName::from_static("x-response-time"),
+                                HeaderValue::from_str(&ms.to_string()).unwrap(),
+                            )
+                        }
+                    }
+                    res
+                })
+            })
+            .service(
+                web::scope("/transform")
+                    .data(String::configure(|cfg| cfg.limit(65_536)))
+                    .service(transform_env)
+                    .service(transform_all_envs),
+            )
+            .service(web::scope("/envs").service(get_envs))
+            .service(web::scope("/configs").service(get_config_by_env))
+            .service(web::scope("/heads").service(get_branch_sha))
+            .route("/ok", web::to(|| HttpResponse::Ok().finish()))
+    })
+    .bind(binding)?
+    .run()?;
+
     Ok(())
 }
 
-#[get("/ok")]
-fn health_check() -> Status {
-    Status::Ok
-}
-
-#[post("/transform/<sha>/<env>", data = "<body>")]
-fn transform_env(
-    body: Data,
+#[derive(Deserialize)]
+struct TransformEnvParams {
     sha: String,
     env: String,
-    state: State<ServerState>,
-) -> Result<String, Status> {
-    let sha = format_sha(&sha);
-    let uri = format!("/transform/{}/{}", &sha, &env);
-    match get_env(
-        &state.environments,
-        &state.config_dir,
-        None,
-        sha,
-        &env,
-        &state.environments_regex,
-        &uri,
-        state.dd_metrics.as_ref(),
-    ) {
+}
+
+#[post("/{sha}/{env}")]
+fn transform_env(
+    data: String,
+    params: web::Path<TransformEnvParams>,
+    state: web::Data<ServerState>,
+) -> impl Responder {
+    let sha = format_sha(&params.sha);
+    let uri = format!("/transform/{}/{}", &sha, &params.env);
+    match get_env(&state, None, sha, &params.env, &uri) {
         Some(env) => {
             let handlebars = hogan::transform::handlebars(state.strict);
-            let mut data = String::new();
-            body.open().read_to_string(&mut data).map_err(|e| {
-                warn!("Unable to consume transform body: {:?}", e);
-                Status::InternalServerError
-            })?;
-            handlebars
-                .render_template(&data, &env.config_data)
-                .map_err(|_| Status::BadRequest)
+            match handlebars.render_template(&data, &env.config_data) {
+                Ok(result) => HttpResponse::Ok().body(result),
+                Err(e) => {
+                    warn!("Error templating request {} {} {}", e, sha, params.env);
+                    HttpResponse::BadRequest().finish()
+                }
+            }
         }
-        None => Err(Status::NotFound),
+        None => HttpResponse::NotFound().finish(),
     }
 }
 
-#[post("/transform/<sha>?<filename>", data = "<body>")]
-fn transform_all_envs(
-    sha: String,
-    filename: String,
-    body: Data,
-    state: State<ServerState>,
-) -> Result<Vec<u8>, Status> {
-    Err(Status::Gone)
+#[post("/{sha}?{filename}")]
+fn transform_all_envs() -> HttpResponse {
+    HttpResponse::Gone().finish()
 }
 
-#[get("/envs/<sha>")]
-fn get_envs(sha: String, state: State<ServerState>) -> Result<JsonValue, Status> {
-    let uri = format!("/envs/{}", &sha);
+#[derive(Deserialize)]
+struct GetEnvsParams {
+    sha: String,
+}
+
+#[get("/{sha}")]
+fn get_envs(params: web::Path<GetEnvsParams>, state: web::Data<ServerState>) -> HttpResponse {
+    let uri = format!("/envs/{}", &params.sha);
     info!("uri: {}", uri);
 
-    match get_env_listing(
-        &state.environment_listings,
-        &state.config_dir,
-        None,
-        &sha,
-        &state.environments_regex,
-        &uri,
-        state.dd_metrics.as_ref(),
-    ) {
-        Some(envs) => Ok(json!(envs)),
-        None => Err(Status::NotFound),
+    match get_env_listing(&state, None, &params.sha, &uri) {
+        Some(envs) => HttpResponse::Ok().json(envs),
+        None => HttpResponse::NotFound().finish(),
     }
 }
 
-#[get("/config/<sha>/<env>")]
-fn get_config_by_env(
+#[derive(Deserialize)]
+struct ConfigByEnvState {
     sha: String,
     env: String,
-    state: State<ServerState>,
-) -> Result<JsonValue, Status> {
-    let sha = format_sha(&sha);
-    let uri = format!("/config/{}/{}", &sha, &env);
-    match get_env(
-        &state.environments,
-        &state.config_dir,
-        None,
-        sha,
-        &env,
-        &state.environments_regex,
-        &uri,
-        state.dd_metrics.as_ref(),
-    ) {
-        Some(env) => Ok(json!(env)),
-        None => Err(Status::NotFound),
+}
+
+#[get("/{sha}/{env}")]
+fn get_config_by_env(
+    params: web::Path<ConfigByEnvState>,
+    state: web::Data<ServerState>,
+) -> HttpResponse {
+    let sha = format_sha(&params.sha);
+    let uri = format!("/config/{}/{}", &sha, &params.env);
+    match get_env(&state, None, sha, &params.env, &uri) {
+        Some(env) => HttpResponse::Ok().json(env),
+        None => HttpResponse::NotFound().finish(),
     }
 }
 
@@ -504,27 +425,31 @@ struct ShaResponse {
     branch_name: String,
 }
 
-#[get("/heads/<branch_name>?<remote_name>")]
-fn get_branch_sha(
-    remote_name: Option<String>,
+#[derive(Deserialize)]
+struct BranchShaParams {
     branch_name: String,
-    state: State<ServerState>,
-) -> Result<Json<ShaResponse>, Status> {
+}
+
+#[get("/{branch_name:.*}")]
+fn get_branch_sha(
+    params: web::Path<BranchShaParams>,
+    state: web::Data<ServerState>,
+) -> impl Responder {
+    //let branch_name = branch_name.intersperse("/").collect::<String>();
+    let branch_name = &params.branch_name;
+    debug!("Looking up branch name {}", branch_name);
     if let Ok(config_dir) = state.config_dir.lock() {
-        if let Some(head_sha) = config_dir.find_branch_head(
-            &remote_name.unwrap_or_else(|| String::from("origin")),
-            &branch_name,
-        ) {
-            Ok(Json(ShaResponse {
+        if let Some(head_sha) = config_dir.find_branch_head(&"origin", branch_name) {
+            HttpResponse::Ok().json(ShaResponse {
                 head_sha,
-                branch_name,
-            }))
+                branch_name: branch_name.to_string(),
+            })
         } else {
-            Err(Status::NotFound)
+            HttpResponse::NotFound().finish()
         }
     } else {
         warn!("Error locking git repo");
-        Err(Status::InternalServerError)
+        HttpResponse::InternalServerError().finish()
     }
 }
 
@@ -533,17 +458,14 @@ fn format_key(sha: &str, env: &str) -> String {
 }
 
 fn get_env(
-    cache: &EnvCache,
-    repo: &Mutex<hogan::config::ConfigDir>,
+    state: &ServerState,
     remote: Option<&str>,
     sha: &str,
     env: &str,
-    environments_regex: &Regex,
     request_url: &str,
-    dd_metrics: Option<&DdMetrics>,
 ) -> Option<Arc<hogan::config::Environment>> {
     let key = format_key(sha, env);
-    let mut cache = match cache.lock() {
+    let mut cache = match state.environments.lock() {
         Ok(cache) => cache,
         Err(e) => {
             warn!("Unable to lock cache {}", e);
@@ -552,20 +474,20 @@ fn get_env(
     };
     if let Some(env) = cache.get(&key) {
         info!("Cache Hit {}", key);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), request_url);
         }
         Some(env.clone())
     } else {
         info!("Cache Miss {}", key);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
         }
-        match repo.lock() {
+        match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
                     match repo
-                        .find(environments_regex.clone())
+                        .find(state.environments_regex.clone())
                         .iter()
                         .find(|e| e.environment == env)
                     {
@@ -592,16 +514,13 @@ fn get_env(
 }
 
 fn get_env_listing(
-    cache: &EnvListingCache,
-    repo: &Mutex<hogan::config::ConfigDir>,
+    state: &ServerState,
     remote: Option<&str>,
     sha: &str,
-    environments_regex: &Regex,
     request_url: &str,
-    dd_metrics: Option<&DdMetrics>,
 ) -> Option<Arc<Vec<EnvDescription>>> {
     let sha = format_sha(sha);
-    let mut cache = match cache.lock() {
+    let mut cache = match state.environment_listings.lock() {
         Ok(cache) => cache,
         Err(e) => {
             warn!("Unable to lock cache {}", e);
@@ -610,19 +529,19 @@ fn get_env_listing(
     };
     if let Some(env) = cache.get(sha) {
         info!("Cache Hit {}", sha);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), request_url);
         }
         Some(env.clone())
     } else {
         info!("Cache Miss {}", sha);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
         }
-        match repo.lock() {
+        match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
-                    let envs = format_envs(&repo.find(environments_regex.clone()));
+                    let envs = format_envs(&repo.find(state.environments_regex.clone()));
                     if !envs.is_empty() {
                         info!("Loading envs for {}", sha);
                         cache.insert(sha, Arc::new(envs));

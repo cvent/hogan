@@ -5,7 +5,7 @@ environment:
   global:
     # TODO This is the Rust channel that build jobs will use by default but can be
     # overridden on a case by case basis down below
-    RUST_VERSION: nightly
+    RUST_VERSION: stable
 
     # TODO Update this to match the name of your project.
     CRATE_NAME: hogan
@@ -73,7 +73,7 @@ deploy:
     # In this example, there are some targets that are tested using the stable
     # and nightly channels. This condition makes sure there is only one release
     # for such targets and that's generated using the stable channel
-    RUST_VERSION: nightly
+    RUST_VERSION: stable
     appveyor_repo_tag: true
   provider: GitHub
 
