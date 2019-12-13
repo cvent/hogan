@@ -363,16 +363,7 @@ fn transform_env(
 ) -> impl Responder {
     let sha = format_sha(&params.sha);
     let uri = format!("/transform/{}/{}", &sha, &params.env);
-    match get_env(
-        &state.environments,
-        &state.config_dir,
-        None,
-        sha,
-        &params.env,
-        &state.environments_regex,
-        &uri,
-        state.dd_metrics.as_ref(),
-    ) {
+    match get_env(&state, None, sha, &params.env, &uri) {
         Some(env) => {
             let handlebars = hogan::transform::handlebars(state.strict);
             match handlebars.render_template(&data, &env.config_data) {
@@ -402,15 +393,7 @@ fn get_envs(params: web::Path<GetEnvsParams>, state: web::Data<ServerState>) -> 
     let uri = format!("/envs/{}", &params.sha);
     info!("uri: {}", uri);
 
-    match get_env_listing(
-        &state.environment_listings,
-        &state.config_dir,
-        None,
-        &params.sha,
-        &state.environments_regex,
-        &uri,
-        state.dd_metrics.as_ref(),
-    ) {
+    match get_env_listing(&state, None, &params.sha, &uri) {
         Some(envs) => HttpResponse::Ok().json(envs),
         None => HttpResponse::NotFound().finish(),
     }
@@ -429,16 +412,7 @@ fn get_config_by_env(
 ) -> HttpResponse {
     let sha = format_sha(&params.sha);
     let uri = format!("/config/{}/{}", &sha, &params.env);
-    match get_env(
-        &state.environments,
-        &state.config_dir,
-        None,
-        sha,
-        &params.env,
-        &state.environments_regex,
-        &uri,
-        state.dd_metrics.as_ref(),
-    ) {
+    match get_env(&state, None, sha, &params.env, &uri) {
         Some(env) => HttpResponse::Ok().json(env),
         None => HttpResponse::NotFound().finish(),
     }
@@ -484,17 +458,14 @@ fn format_key(sha: &str, env: &str) -> String {
 }
 
 fn get_env(
-    cache: &EnvCache,
-    repo: &Mutex<hogan::config::ConfigDir>,
+    state: &ServerState,
     remote: Option<&str>,
     sha: &str,
     env: &str,
-    environments_regex: &Regex,
     request_url: &str,
-    dd_metrics: Option<&DdMetrics>,
 ) -> Option<Arc<hogan::config::Environment>> {
     let key = format_key(sha, env);
-    let mut cache = match cache.lock() {
+    let mut cache = match state.environments.lock() {
         Ok(cache) => cache,
         Err(e) => {
             warn!("Unable to lock cache {}", e);
@@ -503,20 +474,20 @@ fn get_env(
     };
     if let Some(env) = cache.get(&key) {
         info!("Cache Hit {}", key);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), request_url);
         }
         Some(env.clone())
     } else {
         info!("Cache Miss {}", key);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
         }
-        match repo.lock() {
+        match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
                     match repo
-                        .find(environments_regex.clone())
+                        .find(state.environments_regex.clone())
                         .iter()
                         .find(|e| e.environment == env)
                     {
@@ -543,16 +514,13 @@ fn get_env(
 }
 
 fn get_env_listing(
-    cache: &EnvListingCache,
-    repo: &Mutex<hogan::config::ConfigDir>,
+    state: &ServerState,
     remote: Option<&str>,
     sha: &str,
-    environments_regex: &Regex,
     request_url: &str,
-    dd_metrics: Option<&DdMetrics>,
 ) -> Option<Arc<Vec<EnvDescription>>> {
     let sha = format_sha(sha);
-    let mut cache = match cache.lock() {
+    let mut cache = match state.environment_listings.lock() {
         Ok(cache) => cache,
         Err(e) => {
             warn!("Unable to lock cache {}", e);
@@ -561,19 +529,19 @@ fn get_env_listing(
     };
     if let Some(env) = cache.get(sha) {
         info!("Cache Hit {}", sha);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), request_url);
         }
         Some(env.clone())
     } else {
         info!("Cache Miss {}", sha);
-        if let Some(custom_metrics) = dd_metrics {
+        if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), request_url);
         }
-        match repo.lock() {
+        match state.config_dir.lock() {
             Ok(repo) => {
                 if let Some(sha) = repo.refresh(remote, Some(sha)) {
-                    let envs = format_envs(&repo.find(environments_regex.clone()));
+                    let envs = format_envs(&repo.find(state.environments_regex.clone()));
                     if !envs.is_empty() {
                         info!("Loading envs for {}", sha);
                         cache.insert(sha, Arc::new(envs));
