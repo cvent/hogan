@@ -3,8 +3,11 @@ extern crate failure;
 #[macro_use]
 extern crate log;
 
+use actix_web::dev::Service;
+use actix_web::http::header::{HeaderName, HeaderValue};
 use actix_web::{get, post, web, FromRequest, HttpResponse, HttpServer, Responder};
 use failure::Error;
+use futures::future::Future;
 use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
@@ -27,70 +30,6 @@ use stderrlog;
 use structopt;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
-
-// static CustomMetrics: DdMetrics = DdMetrics::new();
-
-// /// Fairing for timing requests.
-// pub struct RequestTimer;
-
-// /// Value stored in request-local state.
-// #[derive(Copy, Clone)]
-// struct TimerStart(Option<SystemTime>);
-
-// impl Fairing for RequestTimer {
-//     fn info(&self) -> Info {
-//         Info {
-//             name: "Request Timer",
-//             kind: Kind::Request | Kind::Response,
-//         }
-//     }
-
-//     /// Stores the start time of the request in request-local state.
-//     fn on_request(&self, request: &mut Request, _: &Data) {
-//         // Store a `TimerStart` instead of directly storing a `SystemTime`
-//         // to ensure that this usage doesn't conflict with anything else
-//         // that might store a `SystemTime` in request-local cache.
-//         if request.uri().path() != "/ok" {
-//             request.local_cache(|| TimerStart(Some(SystemTime::now())));
-//         }
-//     }
-
-//     /// Adds a header to the response indicating how long the server took to
-//     /// process the request.
-//     fn on_response(&self, request: &Request, response: &mut Response) {
-//         info!("request uri: {}", request.uri().path());
-//         if request.uri().path() != "/ok" {
-//             let start_time = request.local_cache(|| TimerStart(None));
-//             if let Some(Ok(duration)) = start_time.0.map(|st| st.elapsed()) {
-//                 let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
-//                 info!("Request duration: {} ms", ms);
-//                 let metrics = DdMetrics::new();
-//                 metrics.time(
-//                     CustomMetrics::RequestTime.metrics_name(),
-//                     request.uri().path(),
-//                     ms as i64,
-//                 );
-//                 response.set_raw_header("X-Response-Time", format!("{} ms", ms));
-//             }
-//         }
-//     }
-// }
-
-// /// Request guard used to retrieve the start time of a request.
-// #[derive(Copy, Clone)]
-// pub struct StartTime(pub SystemTime);
-
-// // Allows a route to access the time a request was initiated.
-// impl<'a, 'r> FromRequest<'a, 'r> for StartTime {
-//     type Error = ();
-
-//     fn from_request(request: &'a Request<'r>) -> request::Outcome<StartTime, ()> {
-//         match *request.local_cache(|| TimerStart(None)) {
-//             TimerStart(Some(time)) => Outcome::Success(StartTime(time)),
-//             TimerStart(None) => Outcome::Failure((Status::InternalServerError, ())),
-//         }
-//     }
-// }
 
 /// Transform templates with handlebars
 #[derive(StructOpt, Debug)]
@@ -360,12 +299,39 @@ fn start_server(
     dd_enabled: bool,
 ) -> Result<(), Error> {
     let binding = format!("{}:{}", address, port);
-
     let server_state = web::Data::new(state);
 
     HttpServer::new(move || {
         actix_web::App::new()
             .register_data(server_state.clone())
+            .wrap_fn(move |req, srv| {
+                let start_time = if req.path() != "/ok" {
+                    Some(SystemTime::now())
+                } else {
+                    None
+                };
+                srv.call(req).map(move |mut res| {
+                    if let Some(time) = start_time {
+                        if let Ok(duration) = time.elapsed() {
+                            let ms = duration.as_millis();
+                            debug!("Request duration: {}", ms);
+                            if dd_enabled {
+                                let metrics = DdMetrics::new();
+                                metrics.time(
+                                    CustomMetrics::RequestTime.metrics_name(),
+                                    "route", //TODO: Normalize the matched URI
+                                    ms as i64,
+                                );
+                            };
+                            res.headers_mut().insert(
+                                HeaderName::from_static("x-response-time"),
+                                HeaderValue::from_str(&ms.to_string()).unwrap(),
+                            )
+                        }
+                    }
+                    res
+                })
+            })
             .service(
                 web::scope("/transform")
                     .data(String::configure(|cfg| cfg.limit(65_536)))
@@ -379,23 +345,7 @@ fn start_server(
     })
     .bind(binding)?
     .run()?;
-    // let routes = routes![
-    //     health_check,
-    //     get_envs,
-    //     get_config_by_env,
-    //     transform_env,
-    //     transform_all_envs,
-    //     get_branch_sha,
-    // ];
-    // let server = if dd_enabled {
-    //     rocket::custom(config)
-    //         .mount("/", routes)
-    //         .attach(RequestTimer)
-    // } else {
-    //     rocket::custom(config).mount("/", routes)
-    // }
-    // .manage(state);
-    // server.launch();
+
     Ok(())
 }
 
