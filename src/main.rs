@@ -3,11 +3,10 @@ extern crate failure;
 #[macro_use]
 extern crate log;
 
-use actix_web::dev::Service;
-use actix_web::http::header::{HeaderName, HeaderValue};
-use actix_web::{get, post, web, FromRequest, HttpResponse, HttpServer, Responder};
+use actix_service::Service;
+use actix_web::{get, post, web, HttpResponse, HttpServer};
 use failure::Error;
-use futures::future::Future;
+use futures::future::FutureExt;
 use hogan;
 use hogan::config::ConfigDir;
 use hogan::config::ConfigUrl;
@@ -292,7 +291,8 @@ struct ServerState {
     dd_metrics: Option<DdMetrics>,
 }
 
-fn start_server(
+#[actix_rt::main]
+async fn start_server(
     address: String,
     port: u16,
     state: ServerState,
@@ -303,14 +303,14 @@ fn start_server(
 
     HttpServer::new(move || {
         actix_web::App::new()
-            .register_data(server_state.clone())
+            .app_data(server_state.clone())
             .wrap_fn(move |req, srv| {
                 let start_time = if req.path() != "/ok" {
                     Some(SystemTime::now())
                 } else {
                     None
                 };
-                srv.call(req).map(move |mut res| {
+                srv.call(req).map(move |res| {
                     if let Some(time) = start_time {
                         if let Ok(duration) = time.elapsed() {
                             let ms = duration.as_millis();
@@ -323,10 +323,6 @@ fn start_server(
                                     ms as i64,
                                 );
                             };
-                            res.headers_mut().insert(
-                                HeaderName::from_static("x-response-time"),
-                                HeaderValue::from_str(&ms.to_string()).unwrap(),
-                            )
                         }
                     }
                     res
@@ -334,7 +330,6 @@ fn start_server(
             })
             .service(
                 web::scope("/transform")
-                    .data(String::configure(|cfg| cfg.limit(65_536)))
                     .service(transform_env)
                     .service(transform_all_envs),
             )
@@ -344,7 +339,8 @@ fn start_server(
             .route("/ok", web::to(|| HttpResponse::Ok().finish()))
     })
     .bind(binding)?
-    .run()?;
+    .run()
+    .await?;
 
     Ok(())
 }
@@ -360,7 +356,7 @@ fn transform_env(
     data: String,
     params: web::Path<TransformEnvParams>,
     state: web::Data<ServerState>,
-) -> impl Responder {
+) -> HttpResponse {
     let sha = format_sha(&params.sha);
     let uri = format!("/transform/{}/{}", &sha, &params.env);
     match get_env(&state, None, sha, &params.env, &uri) {
@@ -434,7 +430,7 @@ struct BranchShaParams {
 fn get_branch_sha(
     params: web::Path<BranchShaParams>,
     state: web::Data<ServerState>,
-) -> impl Responder {
+) -> HttpResponse {
     //let branch_name = branch_name.intersperse("/").collect::<String>();
     let branch_name = &params.branch_name;
     debug!("Looking up branch name {}", branch_name);

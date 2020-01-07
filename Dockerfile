@@ -1,6 +1,6 @@
 # We need to use the Rust build image, because
 # we need the Rust compile and Cargo tooling
-FROM clux/muslrust:nightly as build
+FROM clux/muslrust:stable as build
 
 # Install cmake as it is not included in muslrust, but is needed by libssh2-sys
 RUN apt-get update && apt-get install -y \
