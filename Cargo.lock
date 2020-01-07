@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "hogan"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "actix-rt 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "actix-service 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
