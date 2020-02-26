@@ -2,73 +2,76 @@ use dogstatsd::{Client, Options};
 use std::env;
 
 pub struct DdMetrics {
-    default_tags: [String; 2],
+    default_tags: Vec<String>,
     client: Client,
 }
 impl Default for DdMetrics {
     fn default() -> Self {
-        let dd_options = Options::default();
-        DdMetrics {
-            default_tags: [String::from("service:hogan"), "env:unknown".to_string()],
-            client: Client::new(dd_options).unwrap(),
-        }
+        DdMetrics::new()
     }
 }
 impl DdMetrics {
     pub fn new() -> Self {
         let dd_options = Options::default();
-        let mut env_tag = String::from("env: ");
         let key = "ENV";
-        match env::var(key) {
-            Ok(val) => {
-                info!("{}: {}", key, val);
-                env_tag.push_str(&val);
-            }
-            Err(e) => {
-                info!("couldn't interpret {}: {}", key, e);
-                env_tag.push_str("unknown");
-            }
-        }
+        let env_name = env::var(key).unwrap_or_else(|_| "unknown".to_string());
 
-        let dd_tags = [String::from("service:hogan"), env_tag];
+        info!("Setting up datadog with environment {}", env_name);
+
+        let dd_tags = vec![String::from("service:hogan"), format!("env:{}", env_name)];
         DdMetrics {
             default_tags: dd_tags,
             client: Client::new(dd_options).unwrap(),
         }
     }
-    pub fn incr(&self, name: &str, url: &str) {
+    pub fn incr(&self, name: &str, additional_tags: Option<Vec<String>>) {
         self.client
-            .incr(name, self.append_url_tag(url).iter())
+            .incr(
+                name,
+                additional_tags
+                    .unwrap_or_default()
+                    .iter()
+                    .chain(self.default_tags.iter()),
+            )
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
-    pub fn decr(&self, name: &str, url: &str) {
+    pub fn decr(&self, name: &str, additional_tags: Option<Vec<String>>) {
         self.client
-            .decr(name, self.append_url_tag(url).iter())
+            .decr(
+                name,
+                additional_tags
+                    .unwrap_or_default()
+                    .iter()
+                    .chain(self.default_tags.iter()),
+            )
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
-    pub fn gauge(&self, name: &str, url: &str, value: &str) {
+    pub fn gauge(&self, name: &str, additional_tags: Option<Vec<String>>, value: &str) {
         self.client
-            .gauge(name, value, self.append_url_tag(url).iter())
+            .gauge(
+                name,
+                value,
+                additional_tags
+                    .unwrap_or_default()
+                    .iter()
+                    .chain(self.default_tags.iter()),
+            )
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
-    pub fn time(&self, name: &str, url: &str, value: i64) {
+    pub fn time(&self, name: &str, additional_tags: Option<Vec<String>>, value: i64) {
         self.client
-            .timing(name, value, self.append_url_tag(url).iter())
+            .timing(
+                name,
+                value,
+                additional_tags
+                    .unwrap_or_default()
+                    .iter()
+                    .chain(self.default_tags.iter()),
+            )
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
-    }
-
-    fn append_url_tag(&self, url: &str) -> Vec<String> {
-        let mut dd_tags = Vec::new();
-        dd_tags.extend_from_slice(&self.default_tags);
-
-        let mut url_tag = String::from("request_url: ");
-        url_tag.push_str(url);
-
-        dd_tags.push(url_tag);
-        dd_tags
     }
 
     fn error_msg(&self, name: &str, err: &str) {
@@ -87,7 +90,7 @@ impl CustomMetrics {
         match self {
             CustomMetrics::CacheMiss => "hogan.cache_miss.counter",
             CustomMetrics::CacheHit => "hogan.cache_hit.counter",
-            CustomMetrics::RequestTime => "hogan.request_time.gauge",
+            CustomMetrics::RequestTime => "hogan.requests",
         }
     }
 }
