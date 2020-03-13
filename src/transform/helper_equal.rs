@@ -4,12 +4,12 @@ use handlebars::*;
 pub struct EqualHelper;
 
 impl HelperDef for EqualHelper {
-    fn call<'reg: 'rc, 'rc>(
+    fn call<'reg: 'rc, 'rc, 'ctx>(
         &self,
         h: &Helper<'reg, 'rc>,
         r: &'reg Handlebars,
-        ctx: &Context,
-        rc: &mut RenderContext<'reg>,
+        ctx: &'ctx Context,
+        rc: &mut RenderContext<'reg, 'ctx>,
         out: &mut dyn Output,
     ) -> HelperResult {
         let lvalue = h

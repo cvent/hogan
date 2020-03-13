@@ -5,12 +5,12 @@ use serde_json::value::Value as Json;
 pub struct LowercaseHelper;
 
 impl HelperDef for LowercaseHelper {
-    fn call<'reg: 'rc, 'rc>(
+    fn call<'reg: 'rc, 'rc, 'ctx>(
         &self,
         h: &Helper<'reg, 'rc>,
         _: &'reg Handlebars,
-        _: &Context,
-        _: &mut RenderContext<'reg>,
+        _: &'ctx Context,
+        _: &mut RenderContext<'reg, 'ctx>,
         out: &mut dyn Output,
     ) -> HelperResult {
         let value = h

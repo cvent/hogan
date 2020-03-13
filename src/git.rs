@@ -162,9 +162,9 @@ pub fn fetch(
 
     let mut fo = FetchOptions::new();
     fo.remote_callbacks(cb);
-    remote.download(&[], Some(&mut fo))?;
+    remote.download(&Vec::<String>::new(), Some(&mut fo))?;
 
-    remote.disconnect();
+    remote.disconnect()?;
 
     remote.update_tips(None, true, AutotagOption::Unspecified, None)?;
 

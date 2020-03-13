@@ -4,12 +4,12 @@ use handlebars::*;
 pub struct OrHelper;
 
 impl HelperDef for OrHelper {
-    fn call<'reg: 'rc, 'rc>(
+    fn call<'reg: 'rc, 'rc, 'ctx>(
         &self,
         h: &Helper<'reg, 'rc>,
         r: &'reg Handlebars,
-        ctx: &Context,
-        rc: &mut RenderContext<'reg>,
+        ctx: &'ctx Context,
+        rc: &mut RenderContext<'reg, 'ctx>,
         out: &mut dyn Output,
     ) -> HelperResult {
         if h.params().len() < 2 {
