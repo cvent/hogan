@@ -27,6 +27,8 @@ main() {
             ;;
         x86_64-apple-ios)
             rustup target install x86_64-apple-ios
+            # Clean up mac installation
+            cargo clean
             ;;
     esac
 
