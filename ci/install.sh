@@ -27,10 +27,13 @@ main() {
             ;;
         x86_64-apple-ios)
             rustup target install x86_64-apple-ios
+            # Clean up mac installation
+            cargo clean
             ;;
     esac
 
-    cargo install cross --force
+    # Fix cross version as higher stopped including openssl as a dep
+    cargo install --version 0.1.16 cross
 }
 
 main
