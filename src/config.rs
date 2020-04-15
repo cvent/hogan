@@ -355,8 +355,16 @@ pub fn build_regex(pattern: &str) -> Result<Regex, Error> {
         .map_err(|e| e.into())
 }
 
-pub fn build_env_regex(env: &str) -> Result<Regex, Error> {
-    let pattern = format!(r"^config\.{}\.json$", env);
+pub fn build_env_regex(env: &str, base_pattern: Option<&str>) -> Result<Regex, Error> {
+    let pattern = match base_pattern {
+        Some(base) => {
+            let raw = String::from(base);
+            raw.replace("{}", env)
+        }
+        //Format only supports string literals
+        None => format!(r"^config\.{}\.json$", env),
+    };
+    debug!("Searching for environment with filename: {}", pattern);
     build_regex(&pattern)
 }
 

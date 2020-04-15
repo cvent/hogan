@@ -21,6 +21,7 @@ pub fn start_up_server(
     cache_size: usize,
     environments_regex: Regex,
     datadog: bool,
+    environment_pattern: String,
 ) -> Result<(), Error> {
     let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
@@ -47,6 +48,7 @@ pub fn start_up_server(
         environments_regex,
         strict: common.strict,
         dd_metrics,
+        environment_pattern,
     };
     start_server(address, port, state, datadog)?;
 
@@ -80,6 +82,7 @@ struct ServerState {
     environments_regex: Regex,
     strict: bool,
     dd_metrics: Option<DdMetrics>,
+    environment_pattern: String,
 }
 
 fn contextualize_path(path: &str) -> &str {
@@ -319,7 +322,8 @@ fn get_env(
         }
         let repo = state.config_dir.lock();
         if let Some(sha) = repo.refresh(remote, Some(sha)) {
-            let filter = match hogan::config::build_env_regex(env) {
+            let filter = match hogan::config::build_env_regex(env, Some(&state.environment_pattern))
+            {
                 Ok(filter) => filter,
                 Err(e) => {
                     warn!("Incompatible env name: {} {:?}", env, e);

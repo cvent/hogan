@@ -93,9 +93,17 @@ pub enum AppCommand {
         )]
         environments_regex: Regex,
 
-        /// If datadog monitoring is enabled
+        /// Activate datadog metrics
         #[structopt(short = "d", long = "datadog")]
         datadog: bool,
+
+        /// Pattern used when matching a singular environment. Must contain a {} which represents where the env name will be inserted
+        #[structopt(
+            long = "env-pattern",
+            default_value = r"^config\.{}\.json$",
+            value_name = "PATTERN"
+        )]
+        environment_pattern: String,
     },
 }
 
