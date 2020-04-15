@@ -139,7 +139,6 @@ async fn start_server(
             })
             .service(transform_route_sha_env)
             .service(transform_branch_head)
-            .service(transform_all_envs)
             .service(get_envs)
             .service(get_config_by_env)
             .service(get_branch_sha)
@@ -192,11 +191,6 @@ fn transform_from_sha(
         }
         None => Err(format_err!("Could not find env {}", env)),
     }
-}
-
-#[post("transform/{sha}?{filename}")]
-fn transform_all_envs() -> HttpResponse {
-    HttpResponse::Gone().finish()
 }
 
 #[derive(Deserialize)]
@@ -325,16 +319,19 @@ fn get_env(
         }
         let repo = state.config_dir.lock();
         if let Some(sha) = repo.refresh(remote, Some(sha)) {
-            match repo
-                .find(state.environments_regex.clone())
-                .iter()
-                .find(|e| e.environment == env)
-            {
-                Some(env) => cache.insert(key.clone(), Arc::new(env.clone())),
-                None => {
-                    debug!("Unable to find the env {} in {}", env, sha);
-                    return None;
+            let filter = match hogan::config::build_env_regex(env) {
+                Ok(filter) => filter,
+                Err(e) => {
+                    warn!("Incompatible env name: {} {:?}", env, e);
+                    //In an error scenario we'll still try and match against all configs
+                    state.environments_regex.clone()
                 }
+            };
+            if let Some(env) = repo.find(filter).iter().find(|e| e.environment == env) {
+                cache.insert(key.clone(), Arc::new(env.clone()))
+            } else {
+                debug!("Unable to find the env {} in {}", env, sha);
+                return None;
             };
         };
         if let Some(envs) = cache.get(&key) {
@@ -395,5 +392,22 @@ fn format_sha(sha: &str) -> &str {
         &sha[0..7]
     } else {
         sha
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{test, web, App};
+
+    #[actix_rt::test]
+    async fn test_ok_route() {
+        let mut app =
+            test::init_service(App::new().route("/ok", web::to(|| HttpResponse::Ok().finish())))
+                .await;
+        let req = test::TestRequest::get().uri("/ok").to_request();
+        let resp = test::call_service(&mut app, req).await;
+
+        assert!(resp.status().is_success());
     }
 }

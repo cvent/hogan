@@ -3,6 +3,7 @@ use crate::git;
 use failure::Error;
 use json_patch::merge;
 use regex::Regex;
+use regex::RegexBuilder;
 use serde_json::{self, Value};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -347,10 +348,21 @@ struct EnvironmentType {
     config_data: Value,
 }
 
+pub fn build_regex(pattern: &str) -> Result<Regex, Error> {
+    RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| e.into())
+}
+
+pub fn build_env_regex(env: &str) -> Result<Regex, Error> {
+    let pattern = format!(r"^config\.{}\.json$", env);
+    build_regex(&pattern)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::RegexBuilder;
     use std::path::Path;
 
     #[test]
@@ -534,12 +546,7 @@ mod tests {
             Path::new(""),
         )
         .unwrap();
-        let environments = config_dir.find(
-            RegexBuilder::new("config\\..+\\.json$")
-                .case_insensitive(true)
-                .build()
-                .unwrap(),
-        );
+        let environments = config_dir.find(build_regex("config\\..+\\.json$").unwrap());
         assert_eq!(environments.len(), 4)
     }
 
@@ -550,12 +557,7 @@ mod tests {
             Path::new(""),
         )
         .unwrap();
-        let environments = config_dir.find(
-            RegexBuilder::new(r#"config\.test\d?\.json"#)
-                .case_insensitive(true)
-                .build()
-                .unwrap(),
-        );
+        let environments = config_dir.find(build_regex(r#"config\.test\d?\.json"#).unwrap());
         assert_eq!(environments.len(), 2)
     }
 }
