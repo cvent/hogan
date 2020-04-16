@@ -8,6 +8,8 @@ main() {
     else
         target=x86_64-apple-darwin
         sort=gsort  # for `sort --sort-version`, from brew's coreutils.
+        #brew install openssl@1.1
+        #cargo clean
     fi
 
     # Builds for iOS are done on OSX, but require the specific target to be
@@ -27,8 +29,6 @@ main() {
             ;;
         x86_64-apple-ios)
             rustup target install x86_64-apple-ios
-            # Clean up mac installation
-            cargo clean
             ;;
     esac
 

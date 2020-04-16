@@ -44,6 +44,7 @@ fn main() -> Result<(), Error> {
             cache_size,
             environments_regex,
             datadog,
+            environment_pattern,
         } => {
             server::start_up_server(
                 common,
@@ -52,6 +53,7 @@ fn main() -> Result<(), Error> {
                 cache_size,
                 environments_regex,
                 datadog,
+                environment_pattern,
             )?;
         }
     }
