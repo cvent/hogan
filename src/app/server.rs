@@ -1,7 +1,8 @@
 use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
+use crate::app::db;
 use actix_service::Service;
-use actix_web::{get, post, web, HttpResponse, HttpServer};
+use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
 use failure::Error;
 use futures::future::FutureExt;
 use hogan;
@@ -22,6 +23,7 @@ pub fn start_up_server(
     environments_regex: Regex,
     datadog: bool,
     environment_pattern: String,
+    db_location: Option<String>,
 ) -> Result<(), Error> {
     let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
@@ -41,6 +43,9 @@ pub fn start_up_server(
     } else {
         None
     };
+
+    let db = Arc::new(db::open_db(db_location)?);
+
     let state = ServerState {
         environments,
         environment_listings,
@@ -49,6 +54,7 @@ pub fn start_up_server(
         strict: common.strict,
         dd_metrics,
         environment_pattern,
+        db,
     };
     start_server(address, port, state, datadog)?;
 
@@ -83,6 +89,7 @@ struct ServerState {
     strict: bool,
     dd_metrics: Option<DdMetrics>,
     environment_pattern: String,
+    db: Arc<db::Db>,
 }
 
 fn contextualize_path(path: &str) -> &str {
@@ -101,6 +108,7 @@ async fn start_server(
 
     HttpServer::new(move || {
         actix_web::App::new()
+            .wrap(middleware::Compress::default())
             .app_data(server_state.clone())
             .wrap_fn(move |req, srv| {
                 let start_time = if req.path() != "/ok" {
@@ -320,24 +328,35 @@ fn get_env(
         if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
         }
-        let repo = state.config_dir.lock();
-        if let Some(sha) = repo.refresh(remote, Some(sha)) {
-            let filter = match hogan::config::build_env_regex(env, Some(&state.environment_pattern))
-            {
-                Ok(filter) => filter,
-                Err(e) => {
-                    warn!("Incompatible env name: {} {:?}", env, e);
-                    //In an error scenario we'll still try and match against all configs
-                    state.environments_regex.clone()
-                }
+        //Check embedded db before git repo
+
+        if let Some(environment) = db::read_env(&state.db, env, sha).unwrap_or(None) {
+            info!("Found environment in the db {} {}", env, sha);
+            cache.insert(key.clone(), Arc::new(environment));
+        } else {
+            let repo = state.config_dir.lock();
+            if let Some(sha) = repo.refresh(remote, Some(sha)) {
+                let filter =
+                    match hogan::config::build_env_regex(env, Some(&state.environment_pattern)) {
+                        Ok(filter) => filter,
+                        Err(e) => {
+                            warn!("Incompatible env name: {} {:?}", env, e);
+                            //In an error scenario we'll still try and match against all configs
+                            state.environments_regex.clone()
+                        }
+                    };
+                if let Some(environment) = repo.find(filter).iter().find(|e| e.environment == env) {
+                    if let Err(e) = db::write_env(&state.db, env, &sha, environment) {
+                        warn!("Unable to write env {} to db {:?}", key, e);
+                        return None;
+                    };
+                    cache.insert(key.clone(), Arc::new(environment.clone()))
+                } else {
+                    debug!("Unable to find the env {} in {}", env, sha);
+                    return None;
+                };
             };
-            if let Some(env) = repo.find(filter).iter().find(|e| e.environment == env) {
-                cache.insert(key.clone(), Arc::new(env.clone()))
-            } else {
-                debug!("Unable to find the env {} in {}", env, sha);
-                return None;
-            };
-        };
+        }
         if let Some(envs) = cache.get(&key) {
             Some(envs.clone())
         } else {
