@@ -1,26 +1,74 @@
 use bincode;
 use failure::Error;
 use hogan::config::Environment;
+use rusqlite::{params, Connection, OpenFlags, Result, NO_PARAMS};
 use serde::Deserialize;
 use serde::Serialize;
-use sled;
-pub use sled::Db;
-use tempfile;
 
-pub fn open_db(db_name: Option<String>) -> Result<sled::Db, Error> {
-    let path = match db_name {
-        Some(p) => p,
-        None => tempfile::tempdir()?
-            .into_path()
-            .to_str()
-            .unwrap()
-            .to_owned(),
+fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
+    let read_flag = if read_only {
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_WRITE
     };
-    info!("Opening DB: {}", path);
-    sled::open(path).map_err(|e| e.into())
+    let conn = Connection::open_with_flags(
+        db_path,
+        read_flag | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS hogan (
+            key STRING PRIMARY KEY,
+            data BLOB,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP )",
+        NO_PARAMS,
+    )?;
+
+    info!("Opened sqlite connection to {}", db_path);
+
+    Ok(conn)
 }
 
-fn gen_key(sha: &str, env: &str) -> String {
+pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Environment>, Error> {
+    let conn = open_sql_db(db_path, false)?;
+    let mut query = conn.prepare("SELECT data FROM hogan WHERE key = ? LIMIT 1")?;
+    let key = gen_env_key(sha, env);
+    let data: Option<Result<Vec<u8>>> =
+        query.query_map(params![key], |row| Ok(row.get(0)?))?.nth(0);
+    if let Some(data) = data {
+        let decoded: WritableEnvironment = match bincode::deserialize(&data?) {
+            Ok(environment) => environment,
+            Err(e) => {
+                warn!("Unable to deserialize env: {} {:?}", key, e);
+                return Err(e.into());
+            }
+        };
+        Ok(Some(decoded.into()))
+    } else {
+        info!("Unable to find {} in sqlite db", key);
+        Ok(None)
+    }
+}
+
+pub fn write_sql_env(
+    db_path: &str,
+    env: &str,
+    sha: &str,
+    data: &Environment,
+) -> Result<usize, Error> {
+    let conn = open_sql_db(db_path, false)?;
+    let key = gen_env_key(sha, env);
+    let env_data: WritableEnvironment = data.into();
+    let data = bincode::serialize(&env_data)?;
+
+    conn.execute(
+        "INSERT INTO hogan (key, data) VALUES (?1, ?2)",
+        params![key, data],
+    )
+    .map_err(|e| e.into())
+}
+
+fn gen_env_key(sha: &str, env: &str) -> String {
     format!("{}::{}", sha, env)
 }
 
@@ -49,38 +97,4 @@ impl From<WritableEnvironment> for Environment {
             environment_type: environment.environment_type.to_owned(),
         }
     }
-}
-
-pub fn write_env(db: &sled::Db, env: &str, sha: &str, data: &Environment) -> Result<(), Error> {
-    write_key(db, &gen_key(sha, env), data)
-}
-
-fn write_key(db: &sled::Db, key: &str, data: &Environment) -> Result<(), Error> {
-    let env: WritableEnvironment = data.into();
-    let data: Vec<u8> = bincode::serialize(&env).unwrap();
-    info!("Writing {} to db size: {}", key, data.len());
-    db.insert(key, data)?;
-    Ok(())
-}
-
-pub fn read_env(db: &sled::Db, env: &str, sha: &str) -> Result<Option<Environment>, Error> {
-    let key = gen_key(sha, env);
-    match db.get(&key)? {
-        Some(data) => {
-            let decoded: WritableEnvironment = match bincode::deserialize(&data) {
-                Ok(environment) => environment,
-                Err(e) => {
-                    warn!("Unable to deserialize env: {} {:?}", key, e);
-                    return Err(e.into());
-                }
-            };
-            Ok(Some(decoded.into()))
-        }
-        None => Ok(None),
-    }
-}
-
-pub fn remove_env(db: &sled::Db, env: &str, sha: &str) -> Result<(), Error> {
-    db.remove(gen_key(sha, env))?;
-    Ok(())
 }

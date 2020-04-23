@@ -107,8 +107,8 @@ pub enum AppCommand {
 
         ///Filepath to the embedded db for storing environments. Will be created if it doesn't exist. If not provided a
         /// random temp directory will be created
-        #[structopt(long = "db", value_name = "PATH")]
-        db_location: Option<String>,
+        #[structopt(long = "db", value_name = "PATH", default_value = "hogan.db")]
+        db_path: String,
     },
 }
 

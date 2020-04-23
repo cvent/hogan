@@ -45,7 +45,7 @@ fn main() -> Result<(), Error> {
             environments_regex,
             datadog,
             environment_pattern,
-            db_location,
+            db_path,
         } => {
             server::start_up_server(
                 common,
@@ -55,7 +55,7 @@ fn main() -> Result<(), Error> {
                 environments_regex,
                 datadog,
                 environment_pattern,
-                db_location,
+                db_path,
             )?;
         }
     }

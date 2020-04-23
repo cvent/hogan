@@ -15,6 +15,20 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+type EnvCache = Mutex<LruCache<String, Arc<hogan::config::Environment>>>;
+type EnvListingCache = Mutex<LruCache<String, Arc<Vec<EnvDescription>>>>;
+
+struct ServerState {
+    environments: EnvCache,
+    environment_listings: EnvListingCache,
+    config_dir: Mutex<hogan::config::ConfigDir>,
+    environments_regex: Regex,
+    strict: bool,
+    dd_metrics: Option<DdMetrics>,
+    environment_pattern: String,
+    db_path: String,
+}
+
 pub fn start_up_server(
     common: AppCommon,
     port: u16,
@@ -23,7 +37,7 @@ pub fn start_up_server(
     environments_regex: Regex,
     datadog: bool,
     environment_pattern: String,
-    db_location: Option<String>,
+    db_path: String,
 ) -> Result<(), Error> {
     let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
@@ -44,8 +58,6 @@ pub fn start_up_server(
         None
     };
 
-    let db = Arc::new(db::open_db(db_location)?);
-
     let state = ServerState {
         environments,
         environment_listings,
@@ -54,7 +66,7 @@ pub fn start_up_server(
         strict: common.strict,
         dd_metrics,
         environment_pattern,
-        db,
+        db_path,
     };
     start_server(address, port, state, datadog)?;
 
@@ -76,20 +88,6 @@ impl From<&hogan::config::Environment> for EnvDescription {
             env_type: env.environment_type.clone(),
         }
     }
-}
-
-type EnvCache = Mutex<LruCache<String, Arc<hogan::config::Environment>>>;
-type EnvListingCache = Mutex<LruCache<String, Arc<Vec<EnvDescription>>>>;
-
-struct ServerState {
-    environments: EnvCache,
-    environment_listings: EnvListingCache,
-    config_dir: Mutex<hogan::config::ConfigDir>,
-    environments_regex: Regex,
-    strict: bool,
-    dd_metrics: Option<DdMetrics>,
-    environment_pattern: String,
-    db: Arc<db::Db>,
 }
 
 fn contextualize_path(path: &str) -> &str {
@@ -330,7 +328,7 @@ fn get_env(
         }
         //Check embedded db before git repo
 
-        if let Some(environment) = db::read_env(&state.db, env, sha).unwrap_or(None) {
+        if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
             info!("Found environment in the db {} {}", env, sha);
             cache.insert(key.clone(), Arc::new(environment));
         } else {
@@ -346,9 +344,8 @@ fn get_env(
                         }
                     };
                 if let Some(environment) = repo.find(filter).iter().find(|e| e.environment == env) {
-                    if let Err(e) = db::write_env(&state.db, env, &sha, environment) {
+                    if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
                         warn!("Unable to write env {} to db {:?}", key, e);
-                        return None;
                     };
                     cache.insert(key.clone(), Arc::new(environment.clone()))
                 } else {
