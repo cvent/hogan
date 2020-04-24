@@ -104,6 +104,11 @@ pub enum AppCommand {
             value_name = "PATTERN"
         )]
         environment_pattern: String,
+
+        ///Filepath to the embedded db for storing environments. Will be created if it doesn't exist. If not provided a
+        /// random temp directory will be created
+        #[structopt(long = "db", value_name = "PATH", default_value = "hogan.db")]
+        db_path: String,
     },
 }
 
