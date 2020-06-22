@@ -2,7 +2,6 @@ use failure::Error;
 use hogan::config::ConfigUrl;
 use regex::{Regex, RegexBuilder};
 use std::path::PathBuf;
-use structopt;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 

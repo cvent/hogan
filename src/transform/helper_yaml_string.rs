@@ -1,5 +1,4 @@
 use handlebars::*;
-use serde_json;
 use serde_json::value::Value as Json;
 
 #[derive(Clone, Copy)]

@@ -1,4 +1,3 @@
-use bincode;
 use failure::Error;
 use hogan::config::Environment;
 use rusqlite::{params, Connection, OpenFlags, Result, NO_PARAMS};
@@ -34,7 +33,7 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
     let mut query = conn.prepare("SELECT data FROM hogan WHERE key = ? LIMIT 1")?;
     let key = gen_env_key(sha, env);
     let data: Option<Result<Vec<u8>>> =
-        query.query_map(params![key], |row| Ok(row.get(0)?))?.nth(0);
+        query.query_map(params![key], |row| Ok(row.get(0)?))?.next();
     if let Some(data) = data {
         let decoded: WritableEnvironment = match bincode::deserialize(&data?) {
             Ok(environment) => environment,

@@ -21,7 +21,8 @@ type EnvListingCache = Mutex<LruCache<String, Arc<Vec<EnvDescription>>>>;
 struct ServerState {
     environments: EnvCache,
     environment_listings: EnvListingCache,
-    config_dir: Mutex<hogan::config::ConfigDir>,
+    config_dir: Arc<hogan::config::ConfigDir>,
+    write_lock: Mutex<usize>,
     environments_regex: Regex,
     strict: bool,
     dd_metrics: Option<DdMetrics>,
@@ -48,7 +49,8 @@ pub fn start_up_server(
         LruCache::<String, Arc<Vec<EnvDescription>>>::with_capacity(cache_size),
     );
 
-    let config_dir = Mutex::new(config_dir);
+    let config_dir = Arc::new(config_dir);
+    let write_lock = Mutex::new(0);
 
     info!("Starting server on {}:{}", address, port);
     info!("datadog monitoring is setting: {}", datadog);
@@ -62,6 +64,7 @@ pub fn start_up_server(
         environments,
         environment_listings,
         config_dir,
+        write_lock,
         environments_regex,
         strict: common.strict,
         dd_metrics,
@@ -246,8 +249,7 @@ struct BranchShaParams {
 }
 
 fn find_branch_head(branch_name: &str, state: &ServerState) -> Option<String> {
-    let config_dir = state.config_dir.lock();
-    if let Some(head_sha) = config_dir.find_branch_head(&"origin", branch_name) {
+    if let Some(head_sha) = state.config_dir.find_branch_head(&"origin", branch_name) {
         Some(head_sha)
     } else {
         None
@@ -307,15 +309,9 @@ fn format_key(sha: &str, env: &str) -> String {
     format!("{}::{}", sha, env)
 }
 
-fn get_env(
-    state: &ServerState,
-    remote: Option<&str>,
-    sha: &str,
-    env: &str,
-) -> Option<Arc<hogan::config::Environment>> {
-    let key = format_key(sha, env);
+fn get_env_from_cache(state: &ServerState, key: &str) -> Option<Arc<hogan::config::Environment>> {
     let mut cache = state.environments.lock();
-    if let Some(env) = cache.get(&key) {
+    if let Some(env) = cache.get(key) {
         info!("Cache Hit {}", key);
         if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), None);
@@ -326,14 +322,33 @@ fn get_env(
         if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
         }
-        //Check embedded db before git repo
+        None
+    }
+}
 
+fn insert_into_env_cache(state: &ServerState, key: &str, data: hogan::config::Environment) {
+    let mut cache = state.environments.lock();
+    cache.insert(key.to_owned(), Arc::new(data));
+}
+
+fn get_env(
+    state: &ServerState,
+    remote: Option<&str>,
+    sha: &str,
+    env: &str,
+) -> Option<Arc<hogan::config::Environment>> {
+    let key = format_key(sha, env);
+
+    if let Some(env) = get_env_from_cache(state, &key) {
+        Some(env)
+    } else {
+        //Check embedded db before git repo
         if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
             info!("Found environment in the db {} {}", env, sha);
-            cache.insert(key.clone(), Arc::new(environment));
+            insert_into_env_cache(state, &key, environment);
         } else {
-            let repo = state.config_dir.lock();
-            if let Some(sha) = repo.refresh(remote, Some(sha)) {
+            let _write_lock = state.write_lock.lock();
+            if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
                 let filter =
                     match hogan::config::build_env_regex(env, Some(&state.environment_pattern)) {
                         Ok(filter) => filter,
@@ -343,19 +358,24 @@ fn get_env(
                             state.environments_regex.clone()
                         }
                     };
-                if let Some(environment) = repo.find(filter).iter().find(|e| e.environment == env) {
+                if let Some(environment) = state
+                    .config_dir
+                    .find(filter)
+                    .iter()
+                    .find(|e| e.environment == env)
+                {
                     if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
                         warn!("Unable to write env {} to db {:?}", key, e);
                     };
-                    cache.insert(key.clone(), Arc::new(environment.clone()))
+                    insert_into_env_cache(state, &key, environment.clone());
                 } else {
                     debug!("Unable to find the env {} in {}", env, sha);
                     return None;
                 };
             };
         }
-        if let Some(envs) = cache.get(&key) {
-            Some(envs.clone())
+        if let Some(envs) = get_env_from_cache(state, &key) {
+            Some(envs)
         } else {
             info!("Unable to find the configuration sha {}", sha);
             None
@@ -363,11 +383,7 @@ fn get_env(
     }
 }
 
-fn get_env_listing(
-    state: &ServerState,
-    remote: Option<&str>,
-    sha: &str,
-) -> Option<Arc<Vec<EnvDescription>>> {
+fn check_env_listing_cache(state: &ServerState, sha: &str) -> Option<Arc<Vec<EnvDescription>>> {
     let sha = format_sha(sha);
     let mut cache = state.environment_listings.lock();
     if let Some(env) = cache.get(sha) {
@@ -381,21 +397,42 @@ fn get_env_listing(
         if let Some(custom_metrics) = &state.dd_metrics {
             custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
         }
-        let repo = state.config_dir.lock();
+        None
+    }
+}
 
-        if let Some(sha) = repo.refresh(remote, Some(sha)) {
-            let envs = format_envs(&repo.find(state.environments_regex.clone()));
-            if !envs.is_empty() {
-                info!("Loading envs for {}", sha);
-                cache.insert(sha, Arc::new(envs));
-            } else {
-                info!("No envs found for {}", sha);
-                return None;
-            }
-        };
+fn insert_into_env_listing_cache(state: &ServerState, sha: &str, data: Vec<EnvDescription>) {
+    let sha = format_sha(sha);
+    let mut cache = state.environment_listings.lock();
+    cache.insert(sha.to_owned(), Arc::new(data));
+}
 
-        if let Some(envs) = cache.get(sha) {
-            Some(envs.clone())
+fn get_env_listing(
+    state: &ServerState,
+    remote: Option<&str>,
+    sha: &str,
+) -> Option<Arc<Vec<EnvDescription>>> {
+    let sha = format_sha(sha);
+    if let Some(env) = check_env_listing_cache(state, &sha) {
+        Some(env)
+    } else {
+        {
+            let _write_lock = state.write_lock.lock();
+
+            if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
+                let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
+                if !envs.is_empty() {
+                    info!("Loading envs for {}", sha);
+                    insert_into_env_listing_cache(state, &sha, envs);
+                } else {
+                    info!("No envs found for {}", sha);
+                    return None;
+                }
+            };
+        }
+
+        if let Some(env) = check_env_listing_cache(state, &sha) {
+            Some(env)
         } else {
             info!("Unable to find the configuration sha {}", sha);
             None
