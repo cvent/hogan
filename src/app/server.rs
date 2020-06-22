@@ -326,9 +326,15 @@ fn get_env_from_cache(state: &ServerState, key: &str) -> Option<Arc<hogan::confi
     }
 }
 
-fn insert_into_env_cache(state: &ServerState, key: &str, data: hogan::config::Environment) {
+fn insert_into_env_cache(
+    state: &ServerState,
+    key: &str,
+    data: hogan::config::Environment,
+) -> Arc<hogan::config::Environment> {
     let mut cache = state.environments.lock();
-    cache.insert(key.to_owned(), Arc::new(data));
+    let arc_data = Arc::new(data);
+    cache.insert(key.to_owned(), arc_data.clone());
+    arc_data
 }
 
 fn get_env(
@@ -345,7 +351,7 @@ fn get_env(
         //Check embedded db before git repo
         if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
             info!("Found environment in the db {} {}", env, sha);
-            insert_into_env_cache(state, &key, environment);
+            Some(insert_into_env_cache(state, &key, environment))
         } else {
             let _write_lock = state.write_lock.lock();
             if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
@@ -367,18 +373,15 @@ fn get_env(
                     if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
                         warn!("Unable to write env {} to db {:?}", key, e);
                     };
-                    insert_into_env_cache(state, &key, environment.clone());
+                    Some(insert_into_env_cache(state, &key, environment.clone()))
                 } else {
                     debug!("Unable to find the env {} in {}", env, sha);
-                    return None;
-                };
-            };
-        }
-        if let Some(envs) = get_env_from_cache(state, &key) {
-            Some(envs)
-        } else {
-            info!("Unable to find the configuration sha {}", sha);
-            None
+                    None
+                }
+            } else {
+                debug!("Unable to find the sha {}", sha);
+                None
+            }
         }
     }
 }
@@ -401,10 +404,16 @@ fn check_env_listing_cache(state: &ServerState, sha: &str) -> Option<Arc<Vec<Env
     }
 }
 
-fn insert_into_env_listing_cache(state: &ServerState, sha: &str, data: Vec<EnvDescription>) {
+fn insert_into_env_listing_cache(
+    state: &ServerState,
+    sha: &str,
+    data: Vec<EnvDescription>,
+) -> Arc<Vec<EnvDescription>> {
     let sha = format_sha(sha);
     let mut cache = state.environment_listings.lock();
-    cache.insert(sha.to_owned(), Arc::new(data));
+    let arc_data = Arc::new(data);
+    cache.insert(sha.to_owned(), arc_data.clone());
+    arc_data
 }
 
 fn get_env_listing(
@@ -423,19 +432,15 @@ fn get_env_listing(
                 let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
                 if !envs.is_empty() {
                     info!("Loading envs for {}", sha);
-                    insert_into_env_listing_cache(state, &sha, envs);
+                    Some(insert_into_env_listing_cache(state, &sha, envs))
                 } else {
                     info!("No envs found for {}", sha);
-                    return None;
+                    None
                 }
-            };
-        }
-
-        if let Some(env) = check_env_listing_cache(state, &sha) {
-            Some(env)
-        } else {
-            info!("Unable to find the configuration sha {}", sha);
-            None
+            } else {
+                info!("Fetch env listings. Unknown SHA: {}", sha);
+                None
+            }
         }
     }
 }
