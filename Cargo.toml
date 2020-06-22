@@ -5,7 +5,7 @@ doc = false
 
 [package]
 name = 'hogan'
-version = '0.8.0'
+version = '0.8.1'
 authors = [
     'Jonathan Morley <jmorley@cvent.com>',
     'Josh Comer <jcomer@cvent.com>',
