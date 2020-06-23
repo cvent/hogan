@@ -5,7 +5,7 @@ doc = false
 
 [package]
 name = 'hogan'
-version = '0.8.0'
+version = '0.8.1'
 authors = [
     'Jonathan Morley <jmorley@cvent.com>',
     'Josh Comer <jcomer@cvent.com>',
@@ -37,7 +37,7 @@ parking_lot = '0.10'
 bincode = '1.2.1'
 
 [dependencies.rusqlite]
-version = '0.22'
+version = '0.23'
 features = ['bundled']
 
 [dependencies.git2]

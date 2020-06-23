@@ -7,7 +7,6 @@ use crate::app::cli;
 use crate::app::config::{App, AppCommand};
 use crate::app::server;
 use failure::Error;
-use stderrlog;
 use structopt;
 use structopt::StructOpt;
 
