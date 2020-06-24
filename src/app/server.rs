@@ -153,6 +153,7 @@ async fn start_server(
             .service(transform_branch_head)
             .service(get_envs)
             .service(get_config_by_env)
+            .service(get_config_by_env_branch)
             .service(get_branch_sha)
             .route("/ok", web::to(|| HttpResponse::Ok().finish()))
     })
@@ -169,19 +170,32 @@ struct TransformEnvParams {
     env: String,
 }
 
+lazy_static! {
+    static ref HEX_REGEX: Regex = Regex::new(r"^[a-f0-9]+$").unwrap();
+}
+
 #[post("transform/{sha}/{env}")]
 fn transform_route_sha_env(
     data: String,
     params: web::Path<TransformEnvParams>,
     state: web::Data<ServerState>,
 ) -> HttpResponse {
-    match transform_from_sha(data, &params.sha, &params.env, &state) {
+    //We keep running into folks that are passing in branch name here and it throws off the caching layer and gives inconsistent results
+    //This won't catch branch names with all hex values, but would catch the common case like 'master'
+    let sha = if !HEX_REGEX.is_match(&params.sha) {
+        if let Some(head_sha) = find_branch_head(&params.sha, &state) {
+            head_sha
+        } else {
+            return HttpResponse::NotFound().finish();
+        }
+    } else {
+        params.sha.to_owned()
+    };
+
+    match transform_from_sha(data, &sha, &params.env, &state) {
         Ok(result) => HttpResponse::Ok().body(result),
         Err(e) => {
-            warn!(
-                "Error templating request {} {} {}",
-                e, params.sha, params.env
-            );
+            warn!("Error templating request {} {} {}", e, sha, params.env);
             HttpResponse::BadRequest().finish()
         }
     }
@@ -233,6 +247,28 @@ fn get_config_by_env(
     match get_env(&state, None, sha, &params.env) {
         Some(env) => HttpResponse::Ok().json(env),
         None => HttpResponse::NotFound().finish(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ConfigByEnvBranchState {
+    branch_name: String,
+    env: String,
+}
+
+#[get("branch/{branch_name:.*}/configs/{env}")]
+fn get_config_by_env_branch(
+    params: web::Path<ConfigByEnvBranchState>,
+    state: web::Data<ServerState>,
+) -> HttpResponse {
+    if let Some(head_sha) = find_branch_head(&params.branch_name, &state) {
+        let sha = format_sha(&head_sha);
+        match get_env(&state, None, sha, &params.env) {
+            Some(env) => HttpResponse::Ok().json(env),
+            None => HttpResponse::NotFound().finish(),
+        }
+    } else {
+        HttpResponse::NotFound().finish()
     }
 }
 
@@ -309,19 +345,26 @@ fn format_key(sha: &str, env: &str) -> String {
     format!("{}::{}", sha, env)
 }
 
+fn register_cache_hit(state: &ServerState, key: &str) {
+    info!("Cache Hit {}", key);
+    if let Some(custom_metrics) = &state.dd_metrics {
+        custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), None);
+    }
+}
+
+fn register_cache_miss(state: &ServerState, key: &str) {
+    info!("Cache Miss {}", key);
+    if let Some(custom_metrics) = &state.dd_metrics {
+        custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
+    }
+}
+
 fn get_env_from_cache(state: &ServerState, key: &str) -> Option<Arc<hogan::config::Environment>> {
     let mut cache = state.environments.lock();
     if let Some(env) = cache.get(key) {
-        info!("Cache Hit {}", key);
-        if let Some(custom_metrics) = &state.dd_metrics {
-            custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), None);
-        }
+        register_cache_hit(state, key);
         Some(env.clone())
     } else {
-        info!("Cache Miss {}", key);
-        if let Some(custom_metrics) = &state.dd_metrics {
-            custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
-        }
         None
     }
 }
@@ -354,6 +397,15 @@ fn get_env(
             Some(insert_into_env_cache(state, &key, environment))
         } else {
             let _write_lock = state.write_lock.lock();
+
+            //Double check if the cache now contains the env we are looking for
+            if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
+                register_cache_hit(state, &key);
+                info!("Avoided git lock for config lookup: {}", key);
+                return Some(Arc::new(environment));
+            }
+
+            register_cache_miss(state, &key);
             if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
                 let filter =
                     match hogan::config::build_env_regex(env, Some(&state.environment_pattern)) {
@@ -371,7 +423,7 @@ fn get_env(
                     .find(|e| e.environment == env)
                 {
                     if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
-                        warn!("Unable to write env {} to db {:?}", key, e);
+                        warn!("Unable to write env {} {}::{} to db {:?}", key, sha, env, e);
                     };
                     Some(insert_into_env_cache(state, &key, environment.clone()))
                 } else {
@@ -390,16 +442,9 @@ fn check_env_listing_cache(state: &ServerState, sha: &str) -> Option<Arc<Vec<Env
     let sha = format_sha(sha);
     let mut cache = state.environment_listings.lock();
     if let Some(env) = cache.get(sha) {
-        info!("Cache Hit {}", sha);
-        if let Some(custom_metrics) = &state.dd_metrics {
-            custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), None);
-        }
+        register_cache_hit(state, sha);
         Some(env.clone())
     } else {
-        info!("Cache Miss {}", sha);
-        if let Some(custom_metrics) = &state.dd_metrics {
-            custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
-        }
         None
     }
 }
@@ -428,6 +473,12 @@ fn get_env_listing(
         {
             let _write_lock = state.write_lock.lock();
 
+            //Check if the cache has what we are looking for again
+            if let Some(env) = check_env_listing_cache(state, &sha) {
+                return Some(env);
+            }
+
+            register_cache_miss(state, sha);
             if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
                 let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
                 if !envs.is_empty() {
