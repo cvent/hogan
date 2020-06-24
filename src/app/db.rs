@@ -60,6 +60,8 @@ pub fn write_sql_env(
     let env_data: WritableEnvironment = data.into();
     let data = bincode::serialize(&env_data)?;
 
+    info!("Writing to DB. Key: {} Size: {}", key, data.len());
+
     conn.execute(
         "INSERT INTO hogan (key, data) VALUES (?1, ?2)",
         params![key, data],
