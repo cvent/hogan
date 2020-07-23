@@ -1,5 +1,4 @@
 use handlebars::*;
-use serde_json;
 use serde_json::value::Value as Json;
 
 #[derive(Clone, Copy)]
@@ -7,12 +6,12 @@ pub struct YamlStringHelper;
 
 impl HelperDef for YamlStringHelper {
     // Escapes strings to that they can be safely used inside yaml (And JSON for that matter).
-    fn call<'reg: 'rc, 'rc>(
+    fn call<'reg: 'rc, 'rc, 'ctx>(
         &self,
         h: &Helper<'reg, 'rc>,
         _: &'reg Handlebars,
-        _: &Context,
-        _: &mut RenderContext<'reg>,
+        _: &'ctx Context,
+        _: &mut RenderContext<'reg, 'ctx>,
         out: &mut dyn Output,
     ) -> HelperResult {
         let value = h

@@ -3,6 +3,7 @@ use crate::git;
 use failure::Error;
 use json_patch::merge;
 use regex::Regex;
+use regex::RegexBuilder;
 use serde_json::{self, Value};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -109,7 +110,7 @@ impl ConfigDir {
 
                 let git_repo = git::clone(
                     &url,
-                    branch.as_ref().map(|x| &**x),
+                    branch.as_deref(),
                     temp_dir.path(),
                     Some(&ssh_key_path),
                 )?;
@@ -120,7 +121,6 @@ impl ConfigDir {
                     Some(workdir) => workdir.join(internal_path),
                     None => bail!("No working directory found for git repository"),
                 };
-                let url = url.clone();
                 let ssh_key_path = ssh_key_path.to_owned();
 
                 Ok(ConfigDir::Git {
@@ -348,10 +348,29 @@ struct EnvironmentType {
     config_data: Value,
 }
 
+pub fn build_regex(pattern: &str) -> Result<Regex, Error> {
+    RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| e.into())
+}
+
+pub fn build_env_regex(env: &str, base_pattern: Option<&str>) -> Result<Regex, Error> {
+    let pattern = match base_pattern {
+        Some(base) => {
+            let raw = String::from(base);
+            raw.replace("{}", env)
+        }
+        //Format only supports string literals
+        None => format!(r"^config\.{}\.json$", env),
+    };
+    debug!("Searching for environment with filename: {}", pattern);
+    build_regex(&pattern)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::RegexBuilder;
     use std::path::Path;
 
     #[test]
@@ -535,12 +554,7 @@ mod tests {
             Path::new(""),
         )
         .unwrap();
-        let environments = config_dir.find(
-            RegexBuilder::new("config\\..+\\.json$")
-                .case_insensitive(true)
-                .build()
-                .unwrap(),
-        );
+        let environments = config_dir.find(build_regex("config\\..+\\.json$").unwrap());
         assert_eq!(environments.len(), 4)
     }
 
@@ -551,12 +565,7 @@ mod tests {
             Path::new(""),
         )
         .unwrap();
-        let environments = config_dir.find(
-            RegexBuilder::new(r#"config\.test\d?\.json"#)
-                .case_insensitive(true)
-                .build()
-                .unwrap(),
-        );
+        let environments = config_dir.find(build_regex(r#"config\.test\d?\.json"#).unwrap());
         assert_eq!(environments.len(), 2)
     }
 }

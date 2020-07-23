@@ -3,9 +3,9 @@
 
 environment:
   global:
-  # TODO This is the Rust channel that build jobs will use by default but can be
-  # overridden on a case by case basis down below
-    RUST_VERSION: nightly
+    # TODO This is the Rust channel that build jobs will use by default but can be
+    # overridden on a case by case basis down below
+    RUST_VERSION: stable
 
     # TODO Update this to match the name of your project.
     CRATE_NAME: hogan
@@ -46,12 +46,9 @@ install:
 test_script:
   # we don't run the "test phase" when doing deploys
   - if [%APPVEYOR_REPO_TAG%]==[false] (
-      cargo build --target %TARGET% &&
-      cargo build --target %TARGET% --release &&
-      cargo test --target %TARGET% &&
-      cargo test --target %TARGET% --release &&
-      cargo run --target %TARGET% -- --help &&
-      cargo run --target %TARGET% --release -- --help
+    cargo build --target %TARGET% --release &&
+    cargo test --target %TARGET% --release &&
+    cargo run --target %TARGET% --release -- --help
     )
 
 before_deploy:
@@ -67,7 +64,7 @@ deploy:
   # - Paste the output down here
   auth_token:
     secure: gUc/gGjNcvcAIQmxn5tVGOs9CXtOX6r3c+OAwcc9CpwRWj0HZI2V01eJ45O+5kV4
-  description: ''
+  description: ""
   on:
     # TODO Here you can pick which targets will generate binary releases
     # In this example, there are some targets that are tested using the stable

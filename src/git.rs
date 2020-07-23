@@ -1,6 +1,6 @@
 use failure::Error;
 use git2::build::RepoBuilder;
-use git2::{AutotagOption, Cred, FetchOptions, Reference, RemoteCallbacks, Repository};
+use git2::{AutotagOption, Cred, FetchOptions, Reference, RemoteCallbacks, Repository, ResetType};
 use std::path::Path;
 use std::str;
 use url::Url;
@@ -93,10 +93,10 @@ fn make_password_auth(url: &Url) -> RemoteCallbacks {
 }
 
 fn detach_head(repo: &Repository, sha: &str) -> Result<(), Error> {
-    let sha_oid = match repo.revparse_single(sha) {
+    let revspec = match repo.revparse_single(sha) {
         Ok(revspec) => {
             info!("Found revision {}", sha);
-            revspec.id()
+            revspec
         }
         Err(e) => {
             warn!("Unable to resolve reference {}", sha);
@@ -104,7 +104,8 @@ fn detach_head(repo: &Repository, sha: &str) -> Result<(), Error> {
         }
     };
     info!("Switching repo head to {}", sha);
-    repo.set_head_detached(sha_oid).map_err(|e| e.into())
+    repo.reset(&revspec, ResetType::Hard, None)
+        .map_err(|e| e.into())
 }
 
 pub fn fetch(
@@ -161,9 +162,9 @@ pub fn fetch(
 
     let mut fo = FetchOptions::new();
     fo.remote_callbacks(cb);
-    remote.download(&[], Some(&mut fo))?;
+    remote.download(&Vec::<String>::new(), Some(&mut fo))?;
 
-    remote.disconnect();
+    remote.disconnect()?;
 
     remote.update_tips(None, true, AutotagOption::Unspecified, None)?;
 

@@ -8,12 +8,12 @@ pub struct CommaDelimitedListHelper;
 impl HelperDef for CommaDelimitedListHelper {
     // Change an array of items into a comma seperated list with formatting
     // Usage: {{#comma-list array}}{{elementAttribute}}:{{attribute2}}{{/comma-list}}
-    fn call<'reg: 'rc, 'rc>(
+    fn call<'reg: 'rc, 'rc, 'ctx>(
         &self,
         h: &Helper<'reg, 'rc>,
         r: &'reg Handlebars,
-        ctx: &Context,
-        rc: &mut RenderContext<'reg>,
+        ctx: &'ctx Context,
+        rc: &mut RenderContext<'reg, 'ctx>,
         out: &mut dyn Output,
     ) -> HelperResult {
         let value = h
@@ -23,28 +23,30 @@ impl HelperDef for CommaDelimitedListHelper {
         match h.template() {
             Some(template) => match *value.value() {
                 Json::Array(ref list) => {
-                    let len = list.len();
-
                     let mut render_list = Vec::new();
 
-                    for (i, item) in list.iter().enumerate().take(len) {
-                        let mut local_rc = rc.derive();
-
-                        if let Some(inner_path) = value.path() {
-                            let new_path =
-                                format!("{}/{}/[{}]", local_rc.get_path(), inner_path, i);
-                            local_rc.set_path(new_path.clone());
+                    for (i, item) in list.iter().enumerate() {
+                        let mut local_rc = rc.clone();
+                        let block_rc = local_rc.block_mut().unwrap();
+                        if let Some(inner_path) = value.context_path() {
+                            let block_path = block_rc.base_path_mut();
+                            block_path.append(&mut inner_path.to_owned());
+                            block_path.push(i.to_string());
                         }
 
                         if let Some(block_param) = h.block_param() {
+                            let mut new_block = BlockContext::new();
                             let mut block_params = BlockParams::new();
-                            block_params.add_value(&block_param.to_string(), to_json(item))?;
-                            local_rc.push_block_context(block_params)?;
+                            let param = block_param.to_owned();
+                            block_params.add_value(&param, to_json(item))?;
+                            new_block.set_block_params(block_params);
+                            local_rc.push_block(new_block);
+
+                            render_list.push(template.renders(r, ctx, &mut local_rc)?);
+                        } else {
+                            render_list.push(template.renders(r, ctx, &mut local_rc)?);
                         }
-
-                        render_list.push(template.renders(r, ctx, &mut local_rc)?);
                     }
-
                     out.write(&join(&render_list, ","))?;
 
                     Ok(())

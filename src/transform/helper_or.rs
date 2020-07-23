@@ -4,25 +4,22 @@ use handlebars::*;
 pub struct OrHelper;
 
 impl HelperDef for OrHelper {
-    fn call<'reg: 'rc, 'rc>(
+    fn call<'reg: 'rc, 'rc, 'ctx>(
         &self,
         h: &Helper<'reg, 'rc>,
         r: &'reg Handlebars,
-        ctx: &Context,
-        rc: &mut RenderContext<'reg>,
+        ctx: &'ctx Context,
+        rc: &mut RenderContext<'reg, 'ctx>,
         out: &mut dyn Output,
     ) -> HelperResult {
-        let lvalue = h
-            .param(0)
-            .ok_or_else(|| RenderError::new("Left param not found for helper \"or\""))?
-            .value();
-        let rvalue = h
-            .param(1)
-            .ok_or_else(|| RenderError::new("Right param not found for helper \"or\""))?
-            .value();
+        if h.params().len() < 2 {
+            return Err(RenderError::new("'or' requires at least 2 parameters"));
+        }
 
-        let comparison = lvalue.as_str().map_or(false, |v| !v.is_empty())
-            || rvalue.as_str().map_or(false, |v| !v.is_empty());
+        let comparison = h
+            .params()
+            .iter()
+            .any(|p| p.value().as_str().map_or(false, |v| !v.is_empty()));
 
         if h.is_block() {
             let template = if comparison {
@@ -50,6 +47,7 @@ mod test {
     use super::*;
     use crate::transform::helper_equal::EqualHelper;
     use crate::transform::test::test_against_configs;
+    use crate::transform::test::test_error_against_configs;
 
     #[test]
     fn test_or() {
@@ -74,10 +72,23 @@ mod test {
                 r#"{{#if (or (eq Region.Key null) (eq Region.Key "NO"))}}{{else}}Bar{{/if}}"#,
                 "Bar",
             ),
+            (
+                r#"{{#or (eq Region.Key "NO") (eq Region.Key "TEST2") (eq Region.Key "TEST")}}Foo{{/or}}"#,
+                "Foo",
+            ),
         ];
+
+        let error_templates = vec![(
+            r#"{{#or (eq Region.Key "NO") }}Foo{{/or}}"#,
+            "'or' requires at least 2 parameters",
+        )];
 
         for (template, expected) in templates {
             test_against_configs(&handlebars, template, expected)
+        }
+
+        for (template, expected) in error_templates {
+            test_error_against_configs(&handlebars, template, expected)
         }
     }
 }
