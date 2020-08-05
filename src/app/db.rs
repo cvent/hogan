@@ -15,13 +15,15 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
         read_flag | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
     )?;
 
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS hogan (
+    if !read_only {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hogan (
             key STRING PRIMARY KEY,
             data BLOB,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP )",
-        NO_PARAMS,
-    )?;
+            NO_PARAMS,
+        )?;
+    }
 
     info!("Opened sqlite connection to {}", db_path);
 
@@ -29,7 +31,7 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
 }
 
 pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Environment>, Error> {
-    let conn = open_sql_db(db_path, false)?;
+    let conn = open_sql_db(db_path, true)?;
     let mut query = conn.prepare("SELECT data FROM hogan WHERE key = ? LIMIT 1")?;
     let key = gen_env_key(sha, env);
     let data: Option<Result<Vec<u8>>> =
