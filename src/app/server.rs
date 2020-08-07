@@ -1,8 +1,10 @@
 use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::db;
+use crate::app::head;
 use actix_service::Service;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
+use crossbeam_channel::Sender;
 use failure::Error;
 use futures::future::FutureExt;
 use hogan;
@@ -28,6 +30,7 @@ struct ServerState {
     dd_metrics: Option<DdMetrics>,
     environment_pattern: String,
     db_path: String,
+    head_requests: Sender<head::HeadRequest>,
 }
 
 pub fn start_up_server(
@@ -40,7 +43,9 @@ pub fn start_up_server(
     environment_pattern: String,
     db_path: String,
 ) -> Result<(), Error> {
-    let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
+    let config_dir = Arc::new(ConfigDir::new(common.configs_url, &common.ssh_key)?);
+
+    let head_requests = head::init_head(config_dir.clone());
 
     let environments =
         Mutex::new(LruCache::<String, Arc<hogan::config::Environment>>::with_capacity(cache_size));
@@ -49,7 +54,6 @@ pub fn start_up_server(
         LruCache::<String, Arc<Vec<EnvDescription>>>::with_capacity(cache_size),
     );
 
-    let config_dir = Arc::new(config_dir);
     let write_lock = Mutex::new(0);
 
     info!("Starting server on {}:{}", address, port);
@@ -70,6 +74,7 @@ pub fn start_up_server(
         dd_metrics,
         environment_pattern,
         db_path,
+        head_requests,
     };
     start_server(address, port, state, datadog)?;
 
@@ -285,10 +290,12 @@ struct BranchShaParams {
 }
 
 fn find_branch_head(branch_name: &str, state: &ServerState) -> Option<String> {
-    if let Some(head_sha) = state.config_dir.find_branch_head(&"origin", branch_name) {
-        Some(head_sha)
-    } else {
-        None
+    match head::request_branch_head(&state.head_requests, branch_name) {
+        Ok(result) => result,
+        Err(e) => {
+            info!("Unable to fetch head result {} {:?}", branch_name, e);
+            None
+        }
     }
 }
 
