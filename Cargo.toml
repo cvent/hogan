@@ -36,6 +36,7 @@ futures = '0.3'
 parking_lot = '0.11'
 bincode = '1.3'
 lazy_static = '1'
+couchbase = "1.0.0-alpha.3"
 
 [dependencies.rusqlite]
 version = '0.23'

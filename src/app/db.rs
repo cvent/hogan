@@ -71,12 +71,12 @@ pub fn write_sql_env(
     .map_err(|e| e.into())
 }
 
-fn gen_env_key(sha: &str, env: &str) -> String {
+pub fn gen_env_key(sha: &str, env: &str) -> String {
     format!("{}::{}", sha, env)
 }
 
 #[derive(Default, Serialize, Deserialize, Debug)]
-struct WritableEnvironment {
+pub struct WritableEnvironment {
     config_data: String,
     environment: String,
     environment_type: Option<String>,

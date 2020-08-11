@@ -1,6 +1,7 @@
 use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::db;
+use crate::app::couchbase;
 use actix_service::Service;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
 use failure::Error;
@@ -155,6 +156,7 @@ async fn start_server(
             .service(get_config_by_env)
             .service(get_config_by_env_branch)
             .service(get_branch_sha)
+            .service(load_configs)
             .route("/ok", web::to(|| HttpResponse::Ok().finish()))
     })
     .bind(binding)?
@@ -341,6 +343,56 @@ fn transform_branch_head(
     }
 }
 
+#[post("load/{sha}")]
+fn load_configs(
+    params: web::Path<GetEnvsParams>,
+    state: web::Data<ServerState>,
+) -> HttpResponse {
+    if let Some(envs) = get_env_listing(&state, None, &params.sha) {
+        for env in envs.iter() {          
+            info!("Loading config for environment {} sha {}", &env.name, &params.sha);  
+                //Check if the cb cache contains the env we are looking for
+            match couchbase::read_cb_env(&env.name, &params.sha).unwrap_or(None) {
+                Some(_environment) => info!("the config for environment {} sha {} already cached ",  &env.name, &params.sha),
+                None => {
+                    let key = format_key(&params.sha, &env.name);
+                    if let Some(sha) = state.config_dir.refresh(None, Some(&params.sha)) {
+                        let filter =
+                            match hogan::config::build_env_regex(&env.name, Some(&state.environment_pattern)) {
+                                Ok(filter) => filter,
+                                Err(e) => {
+                                    warn!("Incompatible env name: {} {:?}", &env.name, e);
+                                    //In an error scenario we'll still try and match against all configs
+                                    state.environments_regex.clone()
+                                }
+                            };
+                        if let Some(environment) = state
+                            .config_dir
+                            .find(filter)
+                            .iter()
+                            .find(|e| e.environment == env.name)
+                        {
+                            if let Err(e) = couchbase::write_cb_env(&env.name, &params.sha, environment) {
+                                warn!("Unable to write env {} {}::{} to couchbase {:?}", key, sha, &env.name, e);
+                            };
+                        } else {
+                            debug!("Unable to find the env {} in {}", &env.name, sha)                  
+                        }
+                    } else {
+                        debug!("Unable to find the sha {}", &params.sha)              
+                    }
+        
+                }
+            }
+        }
+        HttpResponse::Ok().finish()
+
+    } else {
+        HttpResponse::NotFound().finish()
+    }
+}
+
+
 fn format_key(sha: &str, env: &str) -> String {
     format!("{}::{}", sha, env)
 }
@@ -405,6 +457,13 @@ fn get_env(
                 return Some(Arc::new(environment));
             }
 
+            //Check if the cb cache contains the env we are looking for
+            if let Some(environment) = couchbase::read_cb_env(env, sha).unwrap_or(None) {
+                register_cache_hit(state, &key);
+                info!("Avoided git lock for config lookup: {}", key);
+                return Some(Arc::new(environment));
+            }
+
             register_cache_miss(state, &key);
             if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
                 let filter =
@@ -424,6 +483,9 @@ fn get_env(
                 {
                     if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
                         warn!("Unable to write env {} {}::{} to db {:?}", key, sha, env, e);
+                    };
+                    if let Err(e) = couchbase::write_cb_env(env, &sha, environment) {
+                        warn!("Unable to write env {} {}::{} to couchbase {:?}", key, sha, env, e);
                     };
                     Some(insert_into_env_cache(state, &key, environment.clone()))
                 } else {

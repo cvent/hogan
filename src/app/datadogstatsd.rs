@@ -36,31 +36,6 @@ impl DdMetrics {
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
-    pub fn decr(&self, name: &str, additional_tags: Option<Vec<String>>) {
-        self.client
-            .decr(
-                name,
-                additional_tags
-                    .unwrap_or_default()
-                    .iter()
-                    .chain(self.default_tags.iter()),
-            )
-            .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
-    }
-
-    pub fn gauge(&self, name: &str, additional_tags: Option<Vec<String>>, value: &str) {
-        self.client
-            .gauge(
-                name,
-                value,
-                additional_tags
-                    .unwrap_or_default()
-                    .iter()
-                    .chain(self.default_tags.iter()),
-            )
-            .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
-    }
-
     pub fn time(&self, name: &str, additional_tags: Option<Vec<String>>, value: i64) {
         self.client
             .timing(
