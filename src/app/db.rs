@@ -37,6 +37,7 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
     let data: Option<Result<Vec<u8>>> =
         query.query_map(params![key], |row| Ok(row.get(0)?))?.next();
     if let Some(data) = data {
+        info!("Found data in sqlite db");
         let decoded: WritableEnvironment = match bincode::deserialize(&data?) {
             Ok(environment) => environment,
             Err(e) => {

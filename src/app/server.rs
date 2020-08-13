@@ -516,10 +516,9 @@ fn get_env(
                     if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
                         warn!("Unable to write env {} {}::{} to db {:?}", key, sha, env, e);
                     };
-                    if state.cb_conn.is_some() {
-                        write_cb_env(&state, env, &sha, environment);
-                    };
 
+                    write_cb_env(&state, env, &sha, environment);
+                
                     Some(insert_into_env_cache(state, &key, environment.clone()))
                 } else {
                     debug!("Unable to find the env {} in {}", env, sha);
