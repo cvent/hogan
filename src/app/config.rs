@@ -108,6 +108,10 @@ pub enum AppCommand {
         /// random temp directory will be created
         #[structopt(long = "db", value_name = "PATH", default_value = "hogan.db")]
         db_path: String,
+
+        ///couchbase connection string. 
+        #[structopt(long = "cb-connstr", value_name = "CB_CONNSTR", default_value = "")]
+        cb_connstr: String,
     },
 }
 

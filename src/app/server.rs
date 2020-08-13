@@ -29,6 +29,7 @@ struct ServerState {
     dd_metrics: Option<DdMetrics>,
     environment_pattern: String,
     db_path: String,
+    cb_conn: Option<couchbase::CbConn>
 }
 
 pub fn start_up_server(
@@ -40,6 +41,7 @@ pub fn start_up_server(
     datadog: bool,
     environment_pattern: String,
     db_path: String,
+    cb_connstr: String,
 ) -> Result<(), Error> {
     let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
 
@@ -61,6 +63,13 @@ pub fn start_up_server(
         None
     };
 
+    let cb_conn = if !cb_connstr.is_empty(){
+        info!("couchbase connection is enabled: {}", cb_connstr);
+        Some(couchbase::CbConn::format(&cb_connstr))
+    } else {
+        None
+    };
+
     let state = ServerState {
         environments,
         environment_listings,
@@ -71,6 +80,7 @@ pub fn start_up_server(
         dd_metrics,
         environment_pattern,
         db_path,
+        cb_conn
     };
     start_server(address, port, state, datadog)?;
 
@@ -348,14 +358,15 @@ fn load_configs(
     params: web::Path<GetEnvsParams>,
     state: web::Data<ServerState>,
 ) -> HttpResponse {
+    
     if let Some(envs) = get_env_listing(&state, None, &params.sha) {
         for env in envs.iter() {          
             info!("Loading config for environment {} sha {}", &env.name, &params.sha);  
                 //Check if the cb cache contains the env we are looking for
-            match couchbase::read_cb_env(&env.name, &params.sha).unwrap_or(None) {
+            match read_cb_env(&state, &env.name, &params.sha).unwrap_or(None) {
                 Some(_environment) => info!("the config for environment {} sha {} already cached ",  &env.name, &params.sha),
                 None => {
-                    let key = format_key(&params.sha, &env.name);
+                    // let key = format_key(&params.sha, &env.name);
                     if let Some(sha) = state.config_dir.refresh(None, Some(&params.sha)) {
                         let filter =
                             match hogan::config::build_env_regex(&env.name, Some(&state.environment_pattern)) {
@@ -372,9 +383,10 @@ fn load_configs(
                             .iter()
                             .find(|e| e.environment == env.name)
                         {
-                            if let Err(e) = couchbase::write_cb_env(&env.name, &params.sha, environment) {
-                                warn!("Unable to write env {} {}::{} to couchbase {:?}", key, sha, &env.name, e);
-                            };
+                            // if let Err(e) = couchbase::write_cb_env(&env.name, &params.sha, environment) {
+                            //     warn!("Unable to write env {} {}::{} to couchbase {:?}", key, sha, &env.name, e);
+                            // };
+                            write_cb_env(&state, &env.name, &params.sha, environment);
                         } else {
                             debug!("Unable to find the env {} in {}", &env.name, sha)                  
                         }
@@ -390,6 +402,8 @@ fn load_configs(
     } else {
         HttpResponse::NotFound().finish()
     }
+    
+
 }
 
 
@@ -408,6 +422,24 @@ fn register_cache_miss(state: &ServerState, key: &str) {
     info!("Cache Miss {}", key);
     if let Some(custom_metrics) = &state.dd_metrics {
         custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
+    }
+}
+
+fn write_cb_env(state: &ServerState,env: &str, sha: &str, data: &hogan::config::Environment) {
+    info!("Write to couchbase");
+    if let Some(cb_conn) = &state.cb_conn {
+        if let Err(e) = couchbase::write_cb_env( &cb_conn, env, sha, data) {
+            warn!("Unable to write env {}::{} to couchbase {:?}", env, sha, e);
+        };
+    }
+}
+
+fn read_cb_env(state: &ServerState, env: &str, sha: &str)-> Result<Option<hogan::config::Environment>, Error> {    
+    if let Some(cb_conn) = &state.cb_conn {
+        info!("Read from couchbase");
+        couchbase::read_cb_env( &cb_conn, env, sha) 
+    } else {
+        Ok(None)
     }
 }
 
@@ -457,8 +489,8 @@ fn get_env(
                 return Some(Arc::new(environment));
             }
 
-            //Check if the cb cache contains the env we are looking for
-            if let Some(environment) = couchbase::read_cb_env(env, sha).unwrap_or(None) {
+            //Check if the cb cache contains the env we are looking for         
+            if let Some(environment) = read_cb_env(&state, env, sha).unwrap_or(None) {
                 register_cache_hit(state, &key);
                 info!("Avoided git lock for config lookup: {}", key);
                 return Some(Arc::new(environment));
@@ -484,9 +516,10 @@ fn get_env(
                     if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
                         warn!("Unable to write env {} {}::{} to db {:?}", key, sha, env, e);
                     };
-                    if let Err(e) = couchbase::write_cb_env(env, &sha, environment) {
-                        warn!("Unable to write env {} {}::{} to couchbase {:?}", key, sha, env, e);
+                    if state.cb_conn.is_some() {
+                        write_cb_env(&state, env, &sha, environment);
                     };
+
                     Some(insert_into_env_cache(state, &key, environment.clone()))
                 } else {
                     debug!("Unable to find the env {} in {}", env, sha);

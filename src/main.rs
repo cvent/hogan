@@ -47,6 +47,7 @@ fn main() -> Result<(), Error> {
             datadog,
             environment_pattern,
             db_path,
+            cb_connstr,
         } => {
             server::start_up_server(
                 common,
@@ -57,6 +58,7 @@ fn main() -> Result<(), Error> {
                 datadog,
                 environment_pattern,
                 db_path,
+                cb_connstr,
             )?;
         }
     }
