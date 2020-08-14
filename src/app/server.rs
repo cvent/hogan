@@ -353,57 +353,52 @@ fn transform_branch_head(
     }
 }
 
-#[post("load/{sha}")]
+#[post("load/{sha}/{env}")]
 fn load_configs(
-    params: web::Path<GetEnvsParams>,
+    params: web::Path<ConfigByEnvState>,
     state: web::Data<ServerState>,
 ) -> HttpResponse {
-    
-    if let Some(envs) = get_env_listing(&state, None, &params.sha) {
-        for env in envs.iter() {          
-            info!("Loading config for environment {} sha {}", &env.name, &params.sha);  
-                //Check if the cb cache contains the env we are looking for
-            match read_cb_env(&state, &env.name, &params.sha).unwrap_or(None) {
-                Some(_environment) => info!("the config for environment {} sha {} already cached ",  &env.name, &params.sha),
-                None => {
-                    // let key = format_key(&params.sha, &env.name);
-                    if let Some(sha) = state.config_dir.refresh(None, Some(&params.sha)) {
-                        let filter =
-                            match hogan::config::build_env_regex(&env.name, Some(&state.environment_pattern)) {
-                                Ok(filter) => filter,
-                                Err(e) => {
-                                    warn!("Incompatible env name: {} {:?}", &env.name, e);
-                                    //In an error scenario we'll still try and match against all configs
-                                    state.environments_regex.clone()
-                                }
-                            };
-                        if let Some(environment) = state
-                            .config_dir
-                            .find(filter)
-                            .iter()
-                            .find(|e| e.environment == env.name)
-                        {
-                            // if let Err(e) = couchbase::write_cb_env(&env.name, &params.sha, environment) {
-                            //     warn!("Unable to write env {} {}::{} to couchbase {:?}", key, sha, &env.name, e);
-                            // };
-                            write_cb_env(&state, &env.name, &params.sha, environment);
-                        } else {
-                            debug!("Unable to find the env {} in {}", &env.name, sha)                  
-                        }
-                    } else {
-                        debug!("Unable to find the sha {}", &params.sha)              
-                    }
+    let formatted_sha = format_sha(&params.sha);
         
+    info!("Loading config for environment {} sha {}", &params.env, formatted_sha);  
+        //Check if the cb cache contains the env we are looking for
+    match read_cb_env(&state, &params.env, &params.sha).unwrap_or(None) {
+        Some(_environment) => {
+            info!("the config for environment {} sha {} already cached ",  &params.env, formatted_sha);
+            HttpResponse::Ok().finish()
+        },
+        None => {
+            // let key = format_key(&params.sha, &env.name);
+            if let Some(sha) = state.config_dir.refresh(None, Some(formatted_sha)) {
+                let filter =
+                    match hogan::config::build_env_regex(&params.env, Some(&state.environment_pattern)) {
+                        Ok(filter) => filter,
+                        Err(e) => {
+                            warn!("Incompatible env name: {} {:?}", &params.env, e);
+                            //In an error scenario we'll still try and match against all configs
+                            state.environments_regex.clone()
+                        }
+                    };
+                if let Some(environment) = state
+                    .config_dir
+                    .find(filter)
+                    .iter()
+                    .find(|e| e.environment == params.env)
+                {
+
+                    write_cb_env(&state, &params.env, &sha, environment);
+                    HttpResponse::Ok().finish()
+                } else {
+                    debug!("Unable to find the env {} in {}", &params.env, sha);   
+                    HttpResponse::NotFound().finish()               
                 }
+            } else {
+                debug!("Unable to find the sha {}", formatted_sha);    
+                HttpResponse::NotFound().finish()          
             }
+
         }
-        HttpResponse::Ok().finish()
-
-    } else {
-        HttpResponse::NotFound().finish()
     }
-    
-
 }
 
 
