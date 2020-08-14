@@ -80,7 +80,7 @@ pub fn start_up_server(
         dd_metrics,
         environment_pattern,
         db_path,
-        cb_conn
+        cb_conn,
     };
     start_server(address, port, state, datadog)?;
 
@@ -426,8 +426,8 @@ fn register_cache_miss(state: &ServerState, key: &str) {
 }
 
 fn write_cb_env(state: &ServerState,env: &str, sha: &str, data: &hogan::config::Environment) {
-    info!("Write to couchbase");
     if let Some(cb_conn) = &state.cb_conn {
+        info!("Write to couchbase");
         if let Err(e) = couchbase::write_cb_env( &cb_conn, env, sha, data) {
             warn!("Unable to write env {}::{} to couchbase {:?}", env, sha, e);
         };

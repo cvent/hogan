@@ -10,9 +10,10 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
     } else {
         OpenFlags::SQLITE_OPEN_READ_WRITE
     };
+    
     let conn = Connection::open_with_flags(
         db_path,
-        read_flag | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
+        read_flag | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
     )?;
 
     if !read_only {
@@ -23,7 +24,7 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP )",
             NO_PARAMS,
         )?;
-    }
+    };
 
     info!("Opened sqlite connection to {}", db_path);
 
@@ -34,6 +35,7 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
     let conn = open_sql_db(db_path, true)?;
     let mut query = conn.prepare("SELECT data FROM hogan WHERE key = ? LIMIT 1")?;
     let key = gen_env_key(sha, env);
+    info!("Looking for {} in sqlite db", key );
     let data: Option<Result<Vec<u8>>> =
         query.query_map(params![key], |row| Ok(row.get(0)?))?.next();
     if let Some(data) = data {
