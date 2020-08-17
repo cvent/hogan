@@ -362,12 +362,12 @@ fn load_configs(
         
     info!("Loading config for environment {} sha {}", &params.env, formatted_sha);  
         //Check if the cb cache contains the env we are looking for
-    match read_cb_env(&state, &params.env, &params.sha).unwrap_or(None) {
-        Some(_environment) => {
+    
+    if let Some(exists) = is_cb_env_exist(&state, &params.env, &params.sha).unwrap_or(None) {
+        if exists {
             info!("the config for environment {} sha {} already cached ",  &params.env, formatted_sha);
             HttpResponse::Ok().finish()
-        },
-        None => {
+        }  else {
             // let key = format_key(&params.sha, &env.name);
             if let Some(sha) = state.config_dir.refresh(None, Some(formatted_sha)) {
                 let filter =
@@ -396,8 +396,9 @@ fn load_configs(
                 debug!("Unable to find the sha {}", formatted_sha);    
                 HttpResponse::NotFound().finish()          
             }
-
         }
+    } else {
+        HttpResponse::NotFound().finish() 
     }
 }
 
@@ -437,6 +438,17 @@ fn read_cb_env(state: &ServerState, env: &str, sha: &str)-> Result<Option<hogan:
         Ok(None)
     }
 }
+
+fn is_cb_env_exist(state: &ServerState, env: &str, sha: &str)-> Result<Option<bool>, Error> {    
+    if let Some(cb_conn) = &state.cb_conn {
+        info!("Read from couchbase");
+        couchbase::is_env_exist( &cb_conn, env, sha) 
+    } else {
+        info!("couchbase connection string is not provided");
+        Ok(None)
+    }
+}
+
 
 fn get_env_from_cache(state: &ServerState, key: &str) -> Option<Arc<hogan::config::Environment>> {
     let mut cache = state.environments.lock();

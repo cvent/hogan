@@ -74,7 +74,7 @@ pub fn write_sql_env(
     .map_err(|e| e.into())
 }
 
-pub fn gen_env_key(sha: &str, env: &str) -> String {
+fn gen_env_key(sha: &str, env: &str) -> String {
     format!("{}::{}", sha, env)
 }
 
