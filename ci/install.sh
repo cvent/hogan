@@ -32,8 +32,7 @@ main() {
             ;;
     esac
 
-    # Fix cross version as higher stopped including openssl as a dep
-    cargo install --version 0.1.16 cross
+    cargo install cross
 }
 
 main
