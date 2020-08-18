@@ -39,6 +39,10 @@ lazy_static = '1'
 crossbeam-channel = '0.4'
 threadpool = '1.8'
 
+[dependencies.tokio]
+version = '0.2'
+features = ['blocking']
+
 [dependencies.rusqlite]
 version = '0.23'
 features = ['bundled']
