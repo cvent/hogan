@@ -12,7 +12,7 @@ use tempfile::{self, TempDir};
 use url::{ParseError, Url};
 use walkdir::WalkDir;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ConfigUrl {
     File {
         path: PathBuf,
@@ -85,6 +85,7 @@ impl FromStr for ConfigUrl {
     }
 }
 
+#[derive(Debug)]
 pub enum ConfigDir {
     File {
         directory: PathBuf,
