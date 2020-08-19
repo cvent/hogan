@@ -115,7 +115,7 @@ pub enum AppCommand {
     },
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Debug, Clone)]
 pub struct AppCommon {
     /// Config source. Accepts file and git URLs. Paths within a git repository may be appended
     /// to a git URL, and branches may be specified as a URL fragment (recursive if applicable)
