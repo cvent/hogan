@@ -52,18 +52,18 @@ impl CbConn {
 
 
 
-fn connect(cb_conn: &CbConn) ->  (Cluster, Collection ){
+fn connect(cb_conn: &CbConn) ->  ( Collection, Cluster)  {
     // Connect to the cluster with a connection string and credentials
     let cluster =  Cluster::connect(&cb_conn.host, &cb_conn.username, &cb_conn.password);
     // Open a bucket
     let bucket = cluster.bucket(&cb_conn.bucket);
     // Use the default collection (needs to be used for all server 6.5 and earlier)
-    return (cluster, bucket.default_collection())
+    return ( bucket.default_collection(), cluster ) 
 }
 
 
 pub fn read_cb_env(cb_conn: &CbConn, env: &str, sha: &str) -> Result<Option<Environment>, Error> {
-    let collection = connect(cb_conn).1;
+    let collection = connect(cb_conn).0;
     let key = gen_cb_env_key(&cb_conn.prefix, sha, env);
     // Fetch a document
 
@@ -101,7 +101,7 @@ pub fn write_cb_env(
     sha: &str,
     data: &Environment,
 ) -> Result<Option<usize>, Error> {
-    let collection = connect(cb_conn).1;
+    let collection = connect(cb_conn).0;
     let key = gen_cb_env_key(&cb_conn.prefix, sha, env);
     let env_data: db::WritableEnvironment = data.into();
     info!("Writing to Couchbase DB. Key {}", key);
@@ -123,15 +123,30 @@ pub fn write_cb_env(
 }
 
 pub fn is_env_exist(cb_conn: &CbConn, env: &str, sha: &str) -> Result<Option<bool>, Error> {
-    let cluster = connect(cb_conn).0;
+    // let collection = connect(cb_conn);
+    let cluster = connect(cb_conn).1;
     let key = gen_cb_env_key(&cb_conn.prefix, sha, env);
-    // Fetch a document
 
-    info!("Fetching document id from Couchbase DB. Key {}", key);
+
+    info!("Checking document id from Couchbase DB. Key {}", key);
+
+    // the exists api seems to get wrong result when document is expired or deleted
+    // match block_on(collection.exists( key, ExistsOptions::default())) {
+    //     Ok(result) => {
+    //         println!("{:?}", result);
+    //         Ok(Some(result.exists()))
+    //     }
+    //     Err(e) => {
+    //         info!("query failed! {}", e);
+    //         Err(e.into())
+    //     },
+    // }
+
 
     let options = QueryOptions::default().named_parameters(json!({"id": key}));
+    let statement = format!("select meta().id from {} USE KEYS [$id]", &cb_conn.bucket);
     match block_on(cluster.query(
-        "select meta().id from transient1 USE KEYS [$id]",
+        statement,
         options,
     )) {
         Ok(mut result) => {
@@ -145,7 +160,8 @@ pub fn is_env_exist(cb_conn: &CbConn, env: &str, sha: &str) -> Result<Option<boo
             Err(e.into())
         },
     }
-    
+
+
 
 }
 

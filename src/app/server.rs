@@ -390,15 +390,15 @@ fn load_configs(
                     HttpResponse::Ok().finish()
                 } else {
                     debug!("Unable to find the env {} in {}", &params.env, sha);   
-                    HttpResponse::NotFound().finish()               
+                    HttpResponse::NotFound().body(format!("Unable to find the env {} in {}", &params.env, sha))              
                 }
             } else {
                 debug!("Unable to find the sha {}", formatted_sha);    
-                HttpResponse::NotFound().finish()          
+                HttpResponse::NotFound().body(format!("Unable to find the sha {}", formatted_sha))       
             }
         }
     } else {
-        HttpResponse::NotFound().finish() 
+        HttpResponse::NotFound().body(format!("Unable to check couchbase for env {} in sha {}", &params.env, formatted_sha))
     }
 }
 
