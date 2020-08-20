@@ -5,7 +5,7 @@ doc = false
 
 [package]
 name = 'hogan'
-version = '0.8.4'
+version = '0.8.5'
 authors = [
     'Jonathan Morley <jmorley@cvent.com>',
     'Josh Comer <jcomer@cvent.com>',
@@ -15,7 +15,7 @@ edition = '2018'
 [dependencies]
 failure = '0.1'
 lru_time_cache = '0.10'
-handlebars = '3'
+handlebars = '3.4'
 itertools = '0.9'
 json-patch = '0.2'
 log = '0.4'
