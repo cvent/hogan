@@ -32,13 +32,12 @@ main() {
             ;;
         x86_64-unknown-linux-musl)    
             #build custom target images
-            docker build -t hogan-x86_64-unknown-linux-musl -f docker/Dockerfile.musl docker
+            docker build -t hogan-x86_64-unknown-linux-musl -f ci/docker/Dockerfile.musl ci/docker
             ;;
         x86_64-unknown-linux-gnu)
-            docker build -t hogan-x86_64-unknown-linux-gnu -f docker/Dockerfile.gnu docker
+            docker build -t hogan-x86_64-unknown-linux-gnu -f ci/docker/Dockerfile.gnu ci/docker
             ;;
     esac
-
     cargo install cross
 }
 
