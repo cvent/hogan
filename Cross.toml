@@ -1,0 +1,5 @@
+[target.x86_64-unknown-linux-musl]
+image = "hogan-x86_64-unknown-linux-musl"
+
+[target.x86_64-unknown-linux-gnu]
+image = "hogan-x86_64-unknown-linux-gnu"

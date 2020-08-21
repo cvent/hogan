@@ -30,6 +30,13 @@ main() {
         x86_64-apple-ios)
             rustup target install x86_64-apple-ios
             ;;
+        x86_64-unknown-linux-musl)    
+            #build custom target images
+            docker build -t hogan-x86_64-unknown-linux-musl -f docker/Dockerfile.musl docker
+            ;;
+        x86_64-unknown-linux-gnu)
+            docker build -t hogan-x86_64-unknown-linux-gnu -f docker/Dockerfile.gnu docker
+            ;;
     esac
 
     cargo install cross

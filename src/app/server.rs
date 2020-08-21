@@ -224,7 +224,7 @@ async fn transform_route_sha_env(
     .await
     {
         Ok(r) => r,
-        Err(e) => return HttpResponse::NotFound().finish(),
+        Err(_e) => return HttpResponse::NotFound().finish(),
     };
 
     match result {
