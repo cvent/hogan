@@ -8,13 +8,10 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
     let read_flag = if read_only {
         OpenFlags::SQLITE_OPEN_READ_ONLY
     } else {
-        OpenFlags::SQLITE_OPEN_READ_WRITE
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
     };
-    
-    let conn = Connection::open_with_flags(
-        db_path,
-        read_flag | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
-    )?;
+    let conn =
+        Connection::open_with_flags(db_path, read_flag | OpenFlags::SQLITE_OPEN_SHARED_CACHE)?;
 
     if !read_only {
         conn.execute(
