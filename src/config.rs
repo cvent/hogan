@@ -1,6 +1,7 @@
+use crate::error::HoganError;
 use crate::find_file_paths;
 use crate::git;
-use failure::Error;
+use anyhow::{Context, Result};
 use json_patch::merge;
 use regex::Regex;
 use regex::RegexBuilder;
@@ -25,9 +26,9 @@ pub enum ConfigUrl {
 }
 
 impl FromStr for ConfigUrl {
-    type Err = Error;
+    type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         match Url::parse(&s) {
             Ok(url) => {
                 if url.scheme() == "file" {
@@ -37,7 +38,10 @@ impl FromStr for ConfigUrl {
                 } else {
                     let path_segments = url
                         .path_segments()
-                        .ok_or_else(|| format_err!("Url cannot be a base"))?
+                        .ok_or_else(|| HoganError::InvalidConfiguration {
+                            param: "url".to_string(),
+                            msg: "Url cannot be a base".to_string(),
+                        })?
                         .map(|segment| segment.to_owned())
                         .collect::<Vec<String>>();
 
@@ -57,7 +61,10 @@ impl FromStr for ConfigUrl {
 
                                 git_url
                                     .path_segments_mut()
-                                    .map_err(|_| format_err!("Url cannot be a base"))?
+                                    .map_err(|_| HoganError::InvalidConfiguration {
+                                        param: "url".to_string(),
+                                        msg: "Url cannot be a base".to_string(),
+                                    })?
                                     .clear()
                                     .extend(base_segments);
 
@@ -70,7 +77,11 @@ impl FromStr for ConfigUrl {
                                 internal_path,
                             })
                         }
-                        None => bail!("Config Url not a file path, and not a .git URL"),
+                        None => Err(HoganError::InvalidConfiguration {
+                            msg: "Config Url not a file path, and not a .git URL".to_string(),
+                            param: "url".to_string(),
+                        }
+                        .into()),
                     }
                 }
             }
@@ -100,14 +111,16 @@ pub enum ConfigDir {
 }
 
 impl ConfigDir {
-    pub fn new(url: ConfigUrl, ssh_key_path: &Path) -> Result<ConfigDir, Error> {
+    pub fn new(url: ConfigUrl, ssh_key_path: &Path) -> Result<ConfigDir> {
         let config_dir = match url {
             ConfigUrl::Git {
                 url,
                 branch,
                 internal_path,
             } => {
-                let temp_dir = tempfile::tempdir()?;
+                let temp_dir = tempfile::tempdir().map_err(|e| HoganError::GitError {
+                    msg: format!("Unable to create temp directory {:?}", e),
+                })?;
 
                 let git_repo = git::clone(
                     &url,
@@ -120,7 +133,12 @@ impl ConfigDir {
 
                 let directory = match git_repo.workdir() {
                     Some(workdir) => workdir.join(internal_path),
-                    None => bail!("No working directory found for git repository"),
+                    None => {
+                        return Err(HoganError::GitError {
+                            msg: "No working directory found for git repository".to_string(),
+                        }
+                        .into())
+                    }
                 };
                 let ssh_key_path = ssh_key_path.to_owned();
 
@@ -137,17 +155,20 @@ impl ConfigDir {
 
         if let Ok(ref config_dir) = config_dir {
             if !config_dir.directory().is_dir() {
-                bail!(
-                    "{:?} either does not exist or is not a directory. It needs to be both",
-                    config_dir.directory()
-                )
+                return Err(HoganError::UnknownError {
+                    msg: format!(
+                        "{:?} either does not exist or is not a directory. It needs to be both",
+                        config_dir.directory()
+                    ),
+                }
+                .into());
             }
         }
 
         config_dir
     }
 
-    pub fn extend(&self, branch: &str) -> Result<ConfigDir, Error> {
+    pub fn extend(&self, branch: &str) -> Result<ConfigDir> {
         match self {
             ConfigDir::Git {
                 url, ssh_key_path, ..
@@ -159,7 +180,10 @@ impl ConfigDir {
                 },
                 ssh_key_path,
             ),
-            ConfigDir::File { .. } => Err(format_err!("Can not extend file config")),
+            ConfigDir::File { .. } => Err(HoganError::GitError {
+                msg: "Can not extend file config".to_string(),
+            }
+            .into()),
         }
     }
 
@@ -170,40 +194,30 @@ impl ConfigDir {
         }
     }
 
-    pub fn refresh(&self, remote: Option<&str>, target: Option<&str>) -> Option<String> {
+    pub fn refresh(&self, remote: Option<&str>, target: Option<&str>) -> Result<String> {
         match self {
-            ConfigDir::File { .. } => None,
+            ConfigDir::File { .. } => Err(HoganError::GitError {
+                msg: "Cannot refresh a file config".to_string(),
+            }
+            .into()),
             ConfigDir::Git {
                 directory,
                 url,
                 ssh_key_path,
                 ..
             } => {
-                let git_repo = match git::build_repo(directory.to_str().unwrap()) {
-                    Ok(repo) => repo,
-                    Err(e) => {
-                        error!(
-                            "Error: {} \n Unable to find the git repo: {}",
-                            e,
-                            directory.to_str().unwrap()
-                        );
-                        return None;
-                    }
-                };
-                match git::reset(
+                let git_repo = git::build_repo(directory.to_str().unwrap())
+                    .with_context(|| "Attempting to refresh git repo -- Building Repo")?;
+
+                git::reset(
                     &git_repo,
                     remote.unwrap_or("origin"),
                     Some(ssh_key_path),
                     Some(url),
                     target,
                     false,
-                ) {
-                    Ok(sha) => Some(sha),
-                    Err(e) => {
-                        error!("Error refreshing to {:?} {:?}", target, e);
-                        None
-                    }
-                }
+                )
+                .with_context(|| format!("Error refreshing to {:?}", target))
             }
         }
     }
@@ -261,51 +275,34 @@ impl ConfigDir {
                         .ok()
                         .and_then(|f| serde_json::from_reader(f).ok())
                         .and_then(|c: Config| c.into_environment_type())
-                        .and_then(|mut e| {
+                        .map(|mut e| {
                             e.environment_type = env_type;
-                            Some(e)
+                            e
                         })
                 }),
         )
     }
 
-    pub fn find_branch_head(&self, remote_name: &str, branch_name: &str) -> Option<String> {
+    pub fn find_branch_head(&self, remote_name: &str, branch_name: &str) -> Result<String> {
         match self {
-            ConfigDir::File { .. } => None,
+            ConfigDir::File { .. } => Err(HoganError::GitError {
+                msg: "Unable to perform git actions on a file".to_string(),
+            })
+            .context("Finding branch head"),
             ConfigDir::Git {
                 directory,
                 ssh_key_path,
                 url,
                 ..
             } => {
-                let git_repo = match git::build_repo(directory.to_str().unwrap()) {
-                    Ok(repo) => repo,
-                    Err(e) => {
-                        error!(
-                            "Error: {} \n Unable to find the git repo: {}",
-                            e,
-                            directory.to_str().unwrap()
-                        );
-                        return None;
-                    }
-                };
+                let git_repo = git::build_repo(directory.to_str().unwrap())
+                    .with_context(|| "Finding branch head")?;
 
-                match git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url)) {
-                    Err(e) => {
-                        warn!("Error updating git repo: {:?}", e);
-                        return None;
-                    }
-                    Ok(()) => (),
-                }
+                git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url))
+                    .with_context(|| "Finding branch head, updating repo")?;
 
-                match git::find_branch_head(&git_repo, &format!("{}/{}", remote_name, branch_name))
-                {
-                    Ok(sha) => Some(sha),
-                    Err(e) => {
-                        warn!("Unable to find branch: {:?}", e);
-                        None
-                    }
-                }
+                git::find_branch_head(&git_repo, &format!("{}/{}", remote_name, branch_name))
+                    .with_context(|| "Finding branch head, querying for head")
             }
         }
     }
@@ -349,14 +346,20 @@ struct EnvironmentType {
     config_data: Value,
 }
 
-pub fn build_regex(pattern: &str) -> Result<Regex, Error> {
+pub fn build_regex(pattern: &str) -> Result<Regex> {
     RegexBuilder::new(pattern)
         .case_insensitive(true)
         .build()
-        .map_err(|e| e.into())
+        .map_err(|e| {
+            HoganError::InvalidConfiguration {
+                param: "regex".to_string(),
+                msg: format!("Regex Error: {:?}", e),
+            }
+            .into()
+        })
 }
 
-pub fn build_env_regex(env: &str, base_pattern: Option<&str>) -> Result<Regex, Error> {
+pub fn build_env_regex(env: &str, base_pattern: Option<&str>) -> Result<Regex> {
     let pattern = match base_pattern {
         Some(base) => {
             let raw = String::from(base);

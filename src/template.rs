@@ -1,6 +1,7 @@
 use crate::config::Environment;
+use crate::error::HoganError;
 use crate::find_file_paths;
-use failure::Error;
+use anyhow::{Context, Result};
 use handlebars::Handlebars;
 use regex::Regex;
 use zip::write::{FileOptions, ZipWriter};
@@ -16,12 +17,12 @@ pub struct TemplateDir {
 }
 
 impl TemplateDir {
-    pub fn new(path: PathBuf) -> Result<TemplateDir, Error> {
+    pub fn new(path: PathBuf) -> Result<TemplateDir> {
         if !path.is_dir() {
-            bail!(
-                "{:?} either does not exist or is not a directory. It needs to be both",
-                path
-            )
+            Err(HoganError::UnknownError {
+                msg: "Unable to find the template path".to_string(),
+            })
+            .with_context(|| format!("The path {:?} needs to exist and be a directory", path))
         } else {
             Ok(TemplateDir { directory: path })
         }
@@ -40,7 +41,7 @@ pub struct Template {
 }
 
 impl Template {
-    fn from_path_buf(path: PathBuf) -> Result<Template, Error> {
+    fn from_path_buf(path: PathBuf) -> Result<Template> {
         Ok(Template {
             path: path.clone(),
             contents: fs::read_to_string(path)?,
@@ -49,11 +50,7 @@ impl Template {
 }
 
 impl Template {
-    pub fn render(
-        &self,
-        handlebars: &Handlebars,
-        environment: &Environment,
-    ) -> Result<Rendered, Error> {
+    pub fn render(&self, handlebars: &Handlebars, environment: &Environment) -> Result<Rendered> {
         let mut buf = Cursor::new(Vec::new());
         handlebars.render_template_to_write(&self.contents, &environment.config_data, &mut buf)?;
 
@@ -73,7 +70,7 @@ impl Template {
         &self,
         handlebars: &Handlebars,
         environments: &[Environment],
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Vec<u8>> {
         let options = FileOptions::default().compression_method(Stored);
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
 

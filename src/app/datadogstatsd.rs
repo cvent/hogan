@@ -36,6 +36,7 @@ impl DdMetrics {
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
+    #[allow(dead_code)]
     pub fn decr(&self, name: &str, additional_tags: Option<Vec<String>>) {
         self.client
             .decr(
@@ -48,6 +49,7 @@ impl DdMetrics {
             .unwrap_or_else(|err| self.error_msg(name, &err.to_string()));
     }
 
+    #[allow(dead_code)]
     pub fn gauge(&self, name: &str, additional_tags: Option<Vec<String>>, value: &str) {
         self.client
             .gauge(
@@ -80,16 +82,14 @@ impl DdMetrics {
 }
 
 pub enum CustomMetrics {
-    CacheMiss,
-    CacheHit,
+    Cache,
     RequestTime,
 }
 
 impl CustomMetrics {
     pub fn metrics_name(self) -> &'static str {
         match self {
-            CustomMetrics::CacheMiss => "hogan.cache_miss.counter",
-            CustomMetrics::CacheHit => "hogan.cache_hit.counter",
+            CustomMetrics::Cache => "hogan.cache",
             CustomMetrics::RequestTime => "hogan.requests",
         }
     }
