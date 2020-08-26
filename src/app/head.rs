@@ -121,7 +121,7 @@ pub fn request_branch_head(sender: &Sender<HeadRequest>, branch: &str) -> anyhow
     match sender.send(request) {
         Ok(()) => match return_chan.recv_timeout(std::time::Duration::from_secs(60)) {
             Ok(result) => result.with_context(|| format!("Querying for head of {}", branch)),
-            Err(e) => Err(HoganError::InternalTimeout.into()),
+            Err(_e) => Err(HoganError::InternalTimeout.into()),
         },
         Err(e) => {
             warn!("Unable to send head request {} {:?}", branch, e);

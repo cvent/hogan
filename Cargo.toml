@@ -32,7 +32,6 @@ zip = '0.5'
 dogstatsd = '0.6'
 actix-web = '2'
 actix-rt = '1'
-actix-http = '1'
 actix-service = '1'
 futures = '0.3'
 parking_lot = '0.11'
@@ -46,7 +45,7 @@ version = '0.2'
 features = ['blocking']
 
 [dependencies.rusqlite]
-version = '0.23'
+version = '0.24'
 features = ['bundled']
 
 [dependencies.git2]

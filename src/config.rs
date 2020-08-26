@@ -275,9 +275,9 @@ impl ConfigDir {
                         .ok()
                         .and_then(|f| serde_json::from_reader(f).ok())
                         .and_then(|c: Config| c.into_environment_type())
-                        .and_then(|mut e| {
+                        .map(|mut e| {
                             e.environment_type = env_type;
-                            Some(e)
+                            e
                         })
                 }),
         )

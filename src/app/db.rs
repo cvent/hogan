@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use hogan::config::Environment;
 use rusqlite::{params, Connection, OpenFlags, NO_PARAMS};
 use serde::Deserialize;
@@ -23,7 +23,7 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection> {
         )?;
     }
 
-    info!("Opened sqlite connection to {}", db_path);
+    debug!("Opened sqlite connection to {}", db_path);
 
     Ok(conn)
 }
@@ -44,7 +44,7 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
         };
         Ok(Some(decoded.into()))
     } else {
-        info!("Unable to find {} in sqlite db", key);
+        debug!("Unable to find {} in sqlite db", key);
         Ok(None)
     }
 }
@@ -55,7 +55,7 @@ pub fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) ->
     let env_data: WritableEnvironment = data.into();
     let data = bincode::serialize(&env_data)?;
 
-    info!("Writing to DB. Key: {} Size: {}", key, data.len());
+    debug!("Writing to DB. Key: {} Size: {}", key, data.len());
 
     conn.execute(
         "INSERT INTO hogan (key, data) VALUES (?1, ?2)",

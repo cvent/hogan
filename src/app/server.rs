@@ -2,14 +2,12 @@ use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::db;
 use crate::app::head;
-use actix_http::ResponseBuilder;
 use actix_service::Service;
 use actix_web::middleware::Logger;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
 use futures::future::FutureExt;
-use hogan;
 use hogan::config::ConfigDir;
 use hogan::error::HoganError;
 use lru_time_cache::LruCache;
@@ -42,39 +40,48 @@ fn response_map<'a>() -> HashMap<&'a str, &'a str> {
     HashMap::new()
 }
 
-fn create_error_response(e: &HoganError) -> HttpResponse {
-    match e {
+fn create_error_response(e: anyhow::Error) -> HttpResponse {
+    debug!("An error occurred: {:?}", e);
+    let he = e.into();
+    match he {
         HoganError::BadRequest => HttpResponse::BadGateway().finish(),
         HoganError::GitError { msg } => {
             let mut body = response_map();
-            body.insert("message", msg);
+            body.insert("message", &msg);
             HttpResponse::InternalServerError().json(body)
         }
         HoganError::UnknownBranch { branch } => {
             let mut body = response_map();
-            body.insert("branch", branch);
+            body.insert("branch", &branch);
             body.insert("message", "Unknown branch");
             HttpResponse::NotFound().json(body)
         }
         HoganError::UnknownSHA { sha } => {
             let mut body = response_map();
-            body.insert("sha", sha);
+            body.insert("sha", &sha);
             body.insert("message", "Unknown sha");
             HttpResponse::NotFound().json(body)
         }
         HoganError::InvalidTemplate { msg } => {
             let mut body = response_map();
-            body.insert("message", msg);
+            body.insert("message", &msg);
             HttpResponse::BadRequest().json(body)
         }
         HoganError::UnknownEnvironment { sha, env } => {
             let mut body = response_map();
-            body.insert("sha", sha);
-            body.insert("environment", env);
+            body.insert("sha", &sha);
+            body.insert("environment", &env);
             body.insert("message", "Unknown Environment");
             HttpResponse::NotFound().json(body)
         }
-        _ => HttpResponse::InternalServerError().finish(),
+        HoganError::InternalTimeout => {
+            error!("Internal Timeout Occurred {:?}", he);
+            HttpResponse::RequestTimeout().finish()
+        }
+        _ => {
+            error!("An unexpected error occurred {:?}", he);
+            HttpResponse::InternalServerError().finish()
+        }
     }
 }
 
@@ -251,11 +258,12 @@ async fn transform_route_sha_env(
     {
         Ok(r) => r,
         Err(e) => Err(e.into()),
-    };
+    }
+    .with_context(|| "Branch based transform");
 
     match result {
         Ok(body) => HttpResponse::Ok().body(body),
-        Err(e) => create_error_response(&e.into()),
+        Err(e) => create_error_response(e.into()),
     }
 }
 
@@ -293,7 +301,7 @@ async fn get_envs(params: web::Path<GetEnvsParams>, state: web::Data<ServerState
 
     match result {
         Ok(envs) => HttpResponse::Ok().json(envs),
-        Err(e) => create_error_response(&e.into()),
+        Err(e) => create_error_response(e.into()),
     }
 }
 
@@ -315,13 +323,13 @@ async fn get_config_by_env(
         Ok(env) => env,
         Err(e) => {
             warn!("Error joining on getting environments {:?}", e);
-            return HttpResponse::InternalServerError().finish();
+            Err(e.into())
         }
     };
 
     match result {
-        Some(env) => HttpResponse::Ok().json(env),
-        None => HttpResponse::NotFound().finish(),
+        Ok(env) => HttpResponse::Ok().json(env),
+        Err(e) => create_error_response(e.into()),
     }
 }
 
@@ -339,25 +347,26 @@ async fn get_config_by_env_branch(
     let branch = params.branch_name.to_owned();
     let env = params.env.to_owned();
     let result = match task::spawn_blocking(move || {
-        if let Some(head_sha) = find_branch_head(&branch, &state) {
-            let sha = format_sha(&head_sha);
-            Some(get_env(&state, None, sha, &env))
-        } else {
-            None
-        }
+        let head_sha = match find_branch_head(&branch, &state) {
+            Ok(head_sha) => head_sha,
+            Err(e) => return Err(e),
+        };
+        let sha = format_sha(&head_sha);
+
+        get_env(&state, None, sha, &env)
     })
     .await
     {
         Ok(r) => r,
-        Err(_e) => return HttpResponse::InternalServerError().finish(),
+        Err(e) => {
+            warn!("Error joining when querying configs by branch");
+            Err(e.into())
+        }
     };
 
     match result {
-        Some(result) => match result {
-            Some(env) => HttpResponse::Ok().json(env),
-            None => HttpResponse::NotFound().finish(),
-        },
-        None => HttpResponse::NotFound().finish(),
+        Ok(result) => HttpResponse::Ok().json(result),
+        Err(e) => create_error_response(e.into()),
     }
 }
 
@@ -389,16 +398,16 @@ async fn get_branch_sha(
             Ok(r) => r,
             Err(e) => {
                 warn!("Error joining from branch sha {} {:?}", branch_name, e);
-                return HttpResponse::InternalServerError().finish();
+                Err(e.into())
             }
         };
 
     match result {
-        Some(head_sha) => HttpResponse::Ok().json(ShaResponse {
+        Ok(head_sha) => HttpResponse::Ok().json(ShaResponse {
             head_sha,
             branch_name,
         }),
-        None => HttpResponse::NotFound().finish(),
+        Err(e) => create_error_response(e.into()),
     }
 }
 
@@ -419,14 +428,12 @@ async fn transform_branch_head(
     let environment = params.environment.to_owned();
     //Double wrapped Option representing BRANCH(ENVIRONMENT(TEMPLATE))
     let result = match task::spawn_blocking(move || {
-        if let Some(head_sha) = find_branch_head(&params.branch_name, &state) {
-            match transform_from_sha(data, &head_sha, &params.environment, &state) {
-                Ok(result) => Some(Some(result)),
-                Err(_) => Some(None),
-            }
-        } else {
-            None
-        }
+        let head_sha = match find_branch_head(&params.branch_name, &state) {
+            Ok(sha) => sha,
+            Err(e) => return Err(e),
+        };
+
+        transform_from_sha(data, &head_sha, &params.environment, &state)
     })
     .await
     {
@@ -436,19 +443,13 @@ async fn transform_branch_head(
                 "Error joining from a template request {} {} {:?}",
                 environment, branch_name, e
             );
-            return HttpResponse::InternalServerError().finish();
+            Err(e.into())
         }
     };
 
     match result {
-        Some(result) => match result {
-            Some(body) => HttpResponse::Ok().body(body),
-            None => HttpResponse::BadRequest().body(format!(
-                "Unable to template request on branch {} for environment {}",
-                branch_name, environment
-            )),
-        },
-        None => HttpResponse::NotFound().body(format!("Unable to template branch {}", branch_name)),
+        Ok(result) => HttpResponse::Ok().body(result),
+        Err(e) => create_error_response(e.into()),
     }
 }
 

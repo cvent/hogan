@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use hogan::config::ConfigUrl;
 use regex::{Regex, RegexBuilder};
 use std::path::PathBuf;
