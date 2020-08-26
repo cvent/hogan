@@ -82,6 +82,7 @@ impl DdMetrics {
 pub enum CustomMetrics {
     CacheMiss,
     CacheHit,
+    Cache,
     RequestTime,
 }
 
@@ -90,6 +91,7 @@ impl CustomMetrics {
         match self {
             CustomMetrics::CacheMiss => "hogan.cache_miss.counter",
             CustomMetrics::CacheHit => "hogan.cache_hit.counter",
+            CustomMetrics::Cache => "hogan.cache",
             CustomMetrics::RequestTime => "hogan.requests",
         }
     }

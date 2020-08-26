@@ -1,7 +1,8 @@
 use crate::app::config::App;
 use crate::app::config::AppCommon;
-use failure::Error;
+use anyhow::{Context, Result};
 use hogan::config::ConfigDir;
+use hogan::error::HoganError;
 use hogan::template::TemplateDir;
 use regex::Regex;
 use std::fs::File;
@@ -16,7 +17,7 @@ pub fn cli(
     templates_regex: Regex,
     common: AppCommon,
     ignore_existing: bool,
-) -> Result<(), Error> {
+) -> Result<()> {
     let handlebars = hogan::transform::handlebars(common.strict);
 
     let template_dir = TemplateDir::new(templates_path)?;
@@ -50,10 +51,15 @@ pub fn cli(
                     }
                     Err(e) => Err(e),
                 } {
-                    bail!("Error transforming {:?} due to {}", rendered.path, e)
+                    return Err(HoganError::UnknownError {
+                        msg: format!("Error transforming {:?} due to {:?}", rendered.path, e),
+                    })
+                    .with_context(|| "Error while ignoring existing");
                 }
-            } else if let Err(e) = File::create(&rendered.path)?.write_all(&rendered.contents) {
-                bail!("Error transforming {:?} due to {}", rendered.path, e)
+            } else {
+                File::create(&rendered.path)?
+                    .write_all(&rendered.contents)
+                    .with_context(|| format!("Error transforming {:?}", rendered.path))?;
             }
         }
     }

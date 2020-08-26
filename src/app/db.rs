@@ -1,10 +1,10 @@
-use failure::Error;
+use anyhow::{Context, Result};
 use hogan::config::Environment;
-use rusqlite::{params, Connection, OpenFlags, Result, NO_PARAMS};
+use rusqlite::{params, Connection, OpenFlags, NO_PARAMS};
 use serde::Deserialize;
 use serde::Serialize;
 
-fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
+fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection> {
     let read_flag = if read_only {
         OpenFlags::SQLITE_OPEN_READ_ONLY
     } else {
@@ -28,11 +28,11 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection, Error> {
     Ok(conn)
 }
 
-pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Environment>, Error> {
+pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Environment>> {
     let conn = open_sql_db(db_path, true)?;
     let mut query = conn.prepare("SELECT data FROM hogan WHERE key = ? LIMIT 1")?;
     let key = gen_env_key(sha, env);
-    let data: Option<Result<Vec<u8>>> =
+    let data: Option<rusqlite::Result<Vec<u8>>> =
         query.query_map(params![key], |row| Ok(row.get(0)?))?.next();
     if let Some(data) = data {
         let decoded: WritableEnvironment = match bincode::deserialize(&data?) {
@@ -49,12 +49,7 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
     }
 }
 
-pub fn write_sql_env(
-    db_path: &str,
-    env: &str,
-    sha: &str,
-    data: &Environment,
-) -> Result<usize, Error> {
+pub fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) -> Result<usize> {
     let conn = open_sql_db(db_path, false)?;
     let key = gen_env_key(sha, env);
     let env_data: WritableEnvironment = data.into();

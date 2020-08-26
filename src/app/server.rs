@@ -2,18 +2,22 @@ use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::db;
 use crate::app::head;
+use actix_http::ResponseBuilder;
 use actix_service::Service;
+use actix_web::middleware::Logger;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
+use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
-use failure::Error;
 use futures::future::FutureExt;
 use hogan;
 use hogan::config::ConfigDir;
+use hogan::error::HoganError;
 use lru_time_cache::LruCache;
 use parking_lot::Mutex;
 use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::task;
@@ -34,6 +38,46 @@ struct ServerState {
     head_requests: Sender<head::HeadRequest>,
 }
 
+fn response_map<'a>() -> HashMap<&'a str, &'a str> {
+    HashMap::new()
+}
+
+fn create_error_response(e: &HoganError) -> HttpResponse {
+    match e {
+        HoganError::BadRequest => HttpResponse::BadGateway().finish(),
+        HoganError::GitError { msg } => {
+            let mut body = response_map();
+            body.insert("message", msg);
+            HttpResponse::InternalServerError().json(body)
+        }
+        HoganError::UnknownBranch { branch } => {
+            let mut body = response_map();
+            body.insert("branch", branch);
+            body.insert("message", "Unknown branch");
+            HttpResponse::NotFound().json(body)
+        }
+        HoganError::UnknownSHA { sha } => {
+            let mut body = response_map();
+            body.insert("sha", sha);
+            body.insert("message", "Unknown sha");
+            HttpResponse::NotFound().json(body)
+        }
+        HoganError::InvalidTemplate { msg } => {
+            let mut body = response_map();
+            body.insert("message", msg);
+            HttpResponse::BadRequest().json(body)
+        }
+        HoganError::UnknownEnvironment { sha, env } => {
+            let mut body = response_map();
+            body.insert("sha", sha);
+            body.insert("environment", env);
+            body.insert("message", "Unknown Environment");
+            HttpResponse::NotFound().json(body)
+        }
+        _ => HttpResponse::InternalServerError().finish(),
+    }
+}
+
 pub fn start_up_server(
     common: AppCommon,
     port: u16,
@@ -43,7 +87,7 @@ pub fn start_up_server(
     datadog: bool,
     environment_pattern: String,
     db_path: String,
-) -> Result<(), Error> {
+) -> Result<()> {
     let config_dir = Arc::new(ConfigDir::new(common.configs_url, &common.ssh_key)?);
 
     let head_requests = head::init_head(config_dir.clone());
@@ -109,12 +153,13 @@ async fn start_server(
     port: u16,
     state: ServerState,
     dd_enabled: bool,
-) -> Result<(), Error> {
+) -> Result<()> {
     let binding = format!("{}:{}", address, port);
     let server_state = web::Data::new(state);
 
     HttpServer::new(move || {
         actix_web::App::new()
+            .wrap(Logger::default())
             .wrap(middleware::Compress::default())
             .app_data(server_state.clone())
             .wrap_fn(move |req, srv| {
@@ -188,55 +233,46 @@ async fn transform_route_sha_env(
 ) -> HttpResponse {
     let sha = params.sha.to_owned();
     let env = params.env.to_owned();
-    let result = match task::spawn_blocking(move || {
+    let result: Result<String> = match task::spawn_blocking(move || {
         //We keep running into folks that are passing in branch name here and it throws off the caching layer and gives inconsistent results
         //This won't catch branch names with all hex values, but would catch the common case like 'master'
         let sha = if !HEX_REGEX.is_match(&sha) {
-            if let Some(head_sha) = find_branch_head(&sha, &state) {
-                head_sha
-            } else {
-                return None;
+            match find_branch_head(&sha, &state) {
+                Ok(sha) => sha,
+                Err(e) => return Err(e),
             }
         } else {
             sha
         };
 
-        match transform_from_sha(data, &sha, &env, &state) {
-            Ok(result) => Some(result),
-            Err(e) => {
-                warn!("Error templating request {} {} {:?}", sha, env, e);
-                None
-            }
-        }
+        transform_from_sha(data, &sha, &env, &state)
     })
     .await
     {
         Ok(r) => r,
-        Err(e) => return HttpResponse::NotFound().finish(),
+        Err(e) => Err(e.into()),
     };
 
     match result {
-        Some(body) => HttpResponse::Ok().body(body),
-        None => HttpResponse::BadRequest().finish(),
+        Ok(body) => HttpResponse::Ok().body(body),
+        Err(e) => create_error_response(&e.into()),
     }
 }
 
-fn transform_from_sha(
-    data: String,
-    sha: &str,
-    env: &str,
-    state: &ServerState,
-) -> Result<String, Error> {
+fn transform_from_sha(data: String, sha: &str, env: &str, state: &ServerState) -> Result<String> {
     let sha = format_sha(sha);
-    match get_env(&state, None, sha, env) {
-        Some(env) => {
-            let handlebars = hogan::transform::handlebars(state.strict);
-            handlebars
-                .render_template(&data, &env.config_data)
-                .map_err(|e| e.into())
-        }
-        None => Err(format_err!("Could not find env {}", env)),
-    }
+
+    let env = get_env(&state, None, sha, env)?;
+
+    let handlebars = hogan::transform::handlebars(state.strict);
+    handlebars
+        .render_template(&data, &env.config_data)
+        .map_err(|e| {
+            HoganError::InvalidTemplate {
+                msg: format!("Template Error {:?}", e),
+            }
+            .into()
+        })
 }
 
 #[derive(Deserialize)]
@@ -251,13 +287,13 @@ async fn get_envs(params: web::Path<GetEnvsParams>, state: web::Data<ServerState
             Ok(envs) => envs,
             Err(e) => {
                 warn!("Error joining on getting environments {:?}", e);
-                return HttpResponse::InternalServerError().finish();
+                Err(e.into())
             }
         };
 
     match result {
-        Some(envs) => HttpResponse::Ok().json(envs),
-        None => HttpResponse::NotFound().finish(),
+        Ok(envs) => HttpResponse::Ok().json(envs),
+        Err(e) => create_error_response(&e.into()),
     }
 }
 
@@ -337,14 +373,8 @@ struct BranchShaParams {
     branch_name: String,
 }
 
-fn find_branch_head(branch_name: &str, state: &ServerState) -> Option<String> {
-    match head::request_branch_head(&state.head_requests, branch_name) {
-        Ok(result) => result,
-        Err(e) => {
-            info!("Unable to fetch head result {} {:?}", branch_name, e);
-            None
-        }
-    }
+fn find_branch_head(branch_name: &str, state: &ServerState) -> Result<String> {
+    head::request_branch_head(&state.head_requests, branch_name)
 }
 
 #[get("heads/{branch_name:.*}")]
@@ -427,16 +457,22 @@ fn format_key(sha: &str, env: &str) -> String {
 }
 
 fn register_cache_hit(state: &ServerState, key: &str) {
-    info!("Cache Hit {}", key);
+    debug!("Cache Hit {}", key);
     if let Some(custom_metrics) = &state.dd_metrics {
-        custom_metrics.incr(CustomMetrics::CacheHit.metrics_name(), None);
+        custom_metrics.incr(
+            CustomMetrics::Cache.metrics_name(),
+            Some(vec!["action:hit".to_string()]),
+        );
     }
 }
 
 fn register_cache_miss(state: &ServerState, key: &str) {
-    info!("Cache Miss {}", key);
+    debug!("Cache Miss {}", key);
     if let Some(custom_metrics) = &state.dd_metrics {
-        custom_metrics.incr(CustomMetrics::CacheMiss.metrics_name(), None);
+        custom_metrics.incr(
+            CustomMetrics::Cache.metrics_name(),
+            Some(vec!["action:miss".to_string()]),
+        );
     }
 }
 
@@ -466,54 +502,56 @@ fn get_env(
     remote: Option<&str>,
     sha: &str,
     env: &str,
-) -> Option<Arc<hogan::config::Environment>> {
+) -> Result<Arc<hogan::config::Environment>> {
     let key = format_key(sha, env);
 
     if let Some(env) = get_env_from_cache(state, &key) {
-        Some(env)
+        Ok(env)
     } else {
         //Check embedded db before git repo
         if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
-            info!("Found environment in the db {} {}", env, sha);
-            Some(insert_into_env_cache(state, &key, environment))
+            debug!("Found environment in the db {} {}", env, sha);
+            Ok(insert_into_env_cache(state, &key, environment))
         } else {
             let _write_lock = state.write_lock.lock();
 
             //Double check if the cache now contains the env we are looking for
             if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
                 register_cache_hit(state, &key);
-                info!("Avoided git lock for config lookup: {}", key);
-                return Some(Arc::new(environment));
+                debug!("Avoided git lock for config lookup: {}", key);
+                return Ok(Arc::new(environment));
             }
 
             register_cache_miss(state, &key);
-            if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
-                let filter =
-                    match hogan::config::build_env_regex(env, Some(&state.environment_pattern)) {
-                        Ok(filter) => filter,
-                        Err(e) => {
-                            warn!("Incompatible env name: {} {:?}", env, e);
-                            //In an error scenario we'll still try and match against all configs
-                            state.environments_regex.clone()
-                        }
-                    };
-                if let Some(environment) = state
-                    .config_dir
-                    .find(filter)
-                    .iter()
-                    .find(|e| e.environment == env)
-                {
-                    if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
-                        warn!("Unable to write env {} {}::{} to db {:?}", key, sha, env, e);
-                    };
-                    Some(insert_into_env_cache(state, &key, environment.clone()))
-                } else {
-                    debug!("Unable to find the env {} in {}", env, sha);
-                    None
+
+            let sha = state.config_dir.refresh(remote, Some(sha))?;
+
+            let filter = match hogan::config::build_env_regex(env, Some(&state.environment_pattern))
+            {
+                Ok(filter) => filter,
+                Err(e) => {
+                    warn!("Incompatible env name: {} {:?}", env, e);
+                    //In an error scenario we'll still try and match against all configs
+                    state.environments_regex.clone()
                 }
+            };
+            if let Some(environment) = state
+                .config_dir
+                .find(filter)
+                .iter()
+                .find(|e| e.environment == env)
+            {
+                if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
+                    warn!("Unable to write env {} {}::{} to db {:?}", key, sha, env, e);
+                };
+                Ok(insert_into_env_cache(state, &key, environment.clone()))
             } else {
-                debug!("Unable to find the sha {}", sha);
-                None
+                debug!("Unable to find the env {} in {}", env, sha);
+                Err(HoganError::UnknownEnvironment {
+                    sha,
+                    env: env.to_owned(),
+                }
+                .into())
             }
         }
     }
@@ -546,34 +584,23 @@ fn get_env_listing(
     state: &ServerState,
     remote: Option<&str>,
     sha: &str,
-) -> Option<Arc<Vec<EnvDescription>>> {
+) -> Result<Arc<Vec<EnvDescription>>> {
     let sha = format_sha(sha);
     if let Some(env) = check_env_listing_cache(state, &sha) {
-        Some(env)
+        Ok(env)
     } else {
-        {
-            let _write_lock = state.write_lock.lock();
+        let _write_lock = state.write_lock.lock();
 
-            //Check if the cache has what we are looking for again
-            if let Some(env) = check_env_listing_cache(state, &sha) {
-                return Some(env);
-            }
-
-            register_cache_miss(state, sha);
-            if let Some(sha) = state.config_dir.refresh(remote, Some(sha)) {
-                let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
-                if !envs.is_empty() {
-                    info!("Loading envs for {}", sha);
-                    Some(insert_into_env_listing_cache(state, &sha, envs))
-                } else {
-                    info!("No envs found for {}", sha);
-                    None
-                }
-            } else {
-                info!("Fetch env listings. Unknown SHA: {}", sha);
-                None
-            }
+        //Check if the cache has what we are looking for again
+        if let Some(env) = check_env_listing_cache(state, &sha) {
+            return Ok(env);
         }
+
+        register_cache_miss(state, sha);
+        let sha = state.config_dir.refresh(remote, Some(sha))?;
+        let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
+
+        Ok(insert_into_env_listing_cache(state, &sha, envs))
     }
 }
 

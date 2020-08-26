@@ -1,6 +1,4 @@
 #[macro_use]
-extern crate failure;
-#[macro_use]
 extern crate log;
 #[macro_use]
 extern crate lazy_static;
@@ -8,19 +6,20 @@ extern crate lazy_static;
 use crate::app::cli;
 use crate::app::config::{App, AppCommand};
 use crate::app::server;
-use failure::Error;
-use structopt;
+use anyhow::{Context, Result};
 use structopt::StructOpt;
 
 mod app;
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<()> {
     let opt = App::from_args();
 
     stderrlog::new()
         .module(module_path!())
         .verbosity(opt.verbosity + 2)
-        .init()?;
+        .timestamp(stderrlog::Timestamp::Millisecond)
+        .init()
+        .with_context(|| "Error initializing logging")?;
 
     match opt.cmd {
         AppCommand::Transform {

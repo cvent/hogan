@@ -1,4 +1,4 @@
-use failure::Error;
+use anyhow::{Context, Result};
 use hogan::config::ConfigUrl;
 use regex::{Regex, RegexBuilder};
 use std::path::PathBuf;
@@ -134,11 +134,11 @@ pub struct AppCommon {
 }
 
 impl App {
-    pub fn config_regex(environment: &Regex) -> Result<Regex, Error> {
+    pub fn config_regex(environment: &Regex) -> Result<Regex> {
         App::parse_regex(&format!("config\\.{}\\.json$", environment))
     }
 
-    pub fn parse_regex(src: &str) -> Result<Regex, Error> {
+    pub fn parse_regex(src: &str) -> Result<Regex> {
         RegexBuilder::new(src)
             .case_insensitive(true)
             .build()

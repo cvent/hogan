@@ -1,6 +1,7 @@
+use anyhow::Context;
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use failure::Error;
 use hogan::config::ConfigDir;
+use hogan::error::HoganError;
 use std::collections::hash_map::HashMap;
 use std::sync::Arc;
 use std::thread;
@@ -9,17 +10,17 @@ use threadpool::ThreadPool;
 #[derive(Debug, Clone)]
 pub enum HeadRequest {
     Query {
-        result_channel: Sender<Option<String>>,
+        result_channel: Sender<Result<String, HoganError>>,
         branch: String,
     },
     Result {
-        sha: Option<String>,
+        sha: Result<String, HoganError>,
         branch: String,
     },
 }
 
 impl HeadRequest {
-    fn new_query(branch: &str) -> (Receiver<Option<String>>, Self) {
+    fn new_query(branch: &str) -> (Receiver<Result<String, HoganError>>, Self) {
         let (s, r) = unbounded();
         let hr = HeadRequest::Query {
             result_channel: s,
@@ -28,26 +29,22 @@ impl HeadRequest {
         (r, hr)
     }
 
-    fn new_result(branch: &str, sha: &str) -> Self {
+    fn new_result(branch: &str, sha: Result<String, HoganError>) -> Self {
         HeadRequest::Result {
-            sha: Some(sha.to_owned()),
-            branch: branch.to_owned(),
-        }
-    }
-
-    fn new_empty_result(branch: &str) -> Self {
-        HeadRequest::Result {
-            sha: None,
+            sha,
             branch: branch.to_owned(),
         }
     }
 }
 
 fn head_query(sender: Sender<HeadRequest>, config: Arc<ConfigDir>, branch: String) {
-    let result = match config.find_branch_head(&"origin", &branch) {
-        Some(sha) => HeadRequest::new_result(&branch, &sha),
-        None => HeadRequest::new_empty_result(&branch),
-    };
+    let result = HeadRequest::new_result(
+        &branch,
+        config
+            .find_branch_head(&"origin", &branch)
+            .map_err(|e| e.into()),
+    );
+
     match sender.send(result) {
         Ok(()) => {}
         Err(e) => warn!("Unable to send the result for {} {:?}", branch, e),
@@ -56,7 +53,8 @@ fn head_query(sender: Sender<HeadRequest>, config: Arc<ConfigDir>, branch: Strin
 
 fn worker(sender: Sender<HeadRequest>, receiver: Receiver<HeadRequest>, config: Arc<ConfigDir>) {
     let tp = ThreadPool::new(4);
-    let mut head_requests: HashMap<String, Vec<Sender<Option<String>>>> = HashMap::new();
+    let mut head_requests: HashMap<String, Vec<Sender<Result<String, HoganError>>>> =
+        HashMap::new();
     info!("Started head request worker");
     loop {
         let msg = match receiver.recv() {
@@ -118,19 +116,19 @@ pub fn init_head(config: Arc<ConfigDir>) -> Sender<HeadRequest> {
     s
 }
 
-pub fn request_branch_head(
-    sender: &Sender<HeadRequest>,
-    branch: &str,
-) -> Result<Option<String>, Error> {
+pub fn request_branch_head(sender: &Sender<HeadRequest>, branch: &str) -> anyhow::Result<String> {
     let (return_chan, request) = HeadRequest::new_query(branch);
     match sender.send(request) {
         Ok(()) => match return_chan.recv_timeout(std::time::Duration::from_secs(60)) {
-            Ok(result) => Ok(result),
-            Err(e) => Err(e.into()),
+            Ok(result) => result.with_context(|| format!("Querying for head of {}", branch)),
+            Err(e) => Err(HoganError::InternalTimeout.into()),
         },
         Err(e) => {
             warn!("Unable to send head request {} {:?}", branch, e);
-            Err(e.into())
+            Err(HoganError::UnknownError {
+                msg: "Unable to send head query".to_string(),
+            }
+            .into())
         }
     }
 }
