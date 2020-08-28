@@ -76,7 +76,7 @@ fn create_error_response(e: anyhow::Error) -> HttpResponse {
         }
         HoganError::InternalTimeout => {
             error!("Internal Timeout Occurred {:?}", he);
-            HttpResponse::RequestTimeout().finish()
+            HttpResponse::ServiceUnavailable().finish()
         }
         _ => {
             error!("An unexpected error occurred {:?}", he);
