@@ -1,18 +1,18 @@
 use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::db;
-use crate::app::head;
+use crate::app::head_actor;
 use actix_service::Service;
 use actix_web::middleware::Logger;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
-use crossbeam_channel::Sender;
 use futures::future::FutureExt;
 use hogan::config::ConfigDir;
 use hogan::error::HoganError;
 use lru_time_cache::LruCache;
 use parking_lot::Mutex;
 use regex::Regex;
+use riker::actors::ActorSystem;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -33,7 +33,8 @@ struct ServerState {
     dd_metrics: Option<DdMetrics>,
     environment_pattern: String,
     db_path: String,
-    head_requests: Sender<head::HeadRequest>,
+    actor_system: ActorSystem,
+    head_request_actor: head_actor::HeadRequestActor,
 }
 
 fn response_map<'a>() -> HashMap<&'a str, &'a str> {
@@ -97,7 +98,8 @@ pub fn start_up_server(
 ) -> Result<()> {
     let config_dir = Arc::new(ConfigDir::new(common.configs_url, &common.ssh_key)?);
 
-    let head_requests = head::init_head(config_dir.clone());
+    let actor_system = ActorSystem::new()?;
+    let head_request_actor = head_actor::init_system(&actor_system, config_dir.clone());
 
     let environments =
         Mutex::new(LruCache::<String, Arc<hogan::config::Environment>>::with_capacity(cache_size));
@@ -126,7 +128,8 @@ pub fn start_up_server(
         dd_metrics,
         environment_pattern,
         db_path,
-        head_requests,
+        actor_system,
+        head_request_actor,
     };
     start_server(address, port, state, datadog)?;
 
@@ -263,7 +266,7 @@ async fn transform_route_sha_env(
 
     match result {
         Ok(body) => HttpResponse::Ok().body(body),
-        Err(e) => create_error_response(e.into()),
+        Err(e) => create_error_response(e),
     }
 }
 
@@ -301,7 +304,7 @@ async fn get_envs(params: web::Path<GetEnvsParams>, state: web::Data<ServerState
 
     match result {
         Ok(envs) => HttpResponse::Ok().json(envs),
-        Err(e) => create_error_response(e.into()),
+        Err(e) => create_error_response(e),
     }
 }
 
@@ -329,7 +332,7 @@ async fn get_config_by_env(
 
     match result {
         Ok(env) => HttpResponse::Ok().json(env),
-        Err(e) => create_error_response(e.into()),
+        Err(e) => create_error_response(e),
     }
 }
 
@@ -366,7 +369,7 @@ async fn get_config_by_env_branch(
 
     match result {
         Ok(result) => HttpResponse::Ok().json(result),
-        Err(e) => create_error_response(e.into()),
+        Err(e) => create_error_response(e),
     }
 }
 
@@ -383,7 +386,7 @@ struct BranchShaParams {
 }
 
 fn find_branch_head(branch_name: &str, state: &ServerState) -> Result<String> {
-    head::request_branch_head(&state.head_requests, branch_name)
+    head_actor::request_branch_head(&state.actor_system, &state.head_request_actor, branch_name)
 }
 
 #[get("heads/{branch_name:.*}")]
@@ -407,7 +410,7 @@ async fn get_branch_sha(
             head_sha,
             branch_name,
         }),
-        Err(e) => create_error_response(e.into()),
+        Err(e) => create_error_response(e),
     }
 }
 
@@ -449,7 +452,7 @@ async fn transform_branch_head(
 
     match result {
         Ok(result) => HttpResponse::Ok().body(result),
-        Err(e) => create_error_response(e.into()),
+        Err(e) => create_error_response(e),
     }
 }
 

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use hogan::config::Environment;
-use lzma;
 use rusqlite::{params, Connection, OpenFlags, NO_PARAMS};
 use serde::Deserialize;
 use serde::Serialize;

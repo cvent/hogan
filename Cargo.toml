@@ -5,7 +5,7 @@ doc = false
 
 [package]
 name = 'hogan'
-version = '0.9.0'
+version = '0.10.0'
 authors = [
     'Jonathan Morley <jmorley@cvent.com>',
     'Josh Comer <jcomer@cvent.com>',
@@ -38,8 +38,6 @@ futures = '0.3'
 parking_lot = '0.11'
 bincode = '1.3'
 lazy_static = '1'
-crossbeam-channel = '0.4'
-threadpool = '1.8'
 riker = '0.4'
 riker-patterns = '0.4'
 
@@ -62,6 +60,10 @@ default-features = false
 [dependencies.serde]
 version = '1'
 features = ['rc']
+
+[dependencies.uuid]
+version = '0.8'
+features = ['v4']
 
 [dev-dependencies]
 assert_cmd = '1.0'
