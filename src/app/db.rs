@@ -1,4 +1,5 @@
 use anyhow::Result;
+use compression::prelude::*;
 use hogan::config::Environment;
 use rusqlite::{params, Connection, OpenFlags, NO_PARAMS};
 use serde::Deserialize;
@@ -35,7 +36,11 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
     let data: Option<rusqlite::Result<Vec<u8>>> =
         query.query_map(params![key], |row| Ok(row.get(0)?))?.next();
     if let Some(data) = data {
-        let decompressed_data = lzma::decompress(&data?)?;
+        let decompressed_data = data?
+            .iter()
+            .cloned()
+            .decode(&mut BZip2Decoder::new())
+            .collect::<Result<Vec<_>, _>>()?;
         let decoded: WritableEnvironment = match bincode::deserialize(&decompressed_data) {
             Ok(environment) => environment,
             Err(e) => {
@@ -55,7 +60,11 @@ pub fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) ->
     let key = gen_env_key(sha, env);
     let env_data: WritableEnvironment = data.into();
     let data = bincode::serialize(&env_data)?;
-    let compressed_data = lzma::compress(&data, 6)?;
+    let compressed_data = data
+        .iter()
+        .cloned()
+        .encode(&mut BZip2Encoder::new(6), Action::Finish)
+        .collect::<Result<Vec<_>, _>>()?;
     debug!(
         "Writing to DB. Key: {} Size: {} -> {} = {}",
         key,

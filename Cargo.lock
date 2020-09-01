@@ -573,6 +573,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "compression"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a82b366ae14633c67a1cbb4aa3738210a23f77d2868a0fd50faa23a956f9ec4"
+dependencies = [
+ "cfg-if",
+ "lazy_static 1.4.0",
+ "log",
+ "num-traits 0.2.12",
+]
+
+[[package]]
 name = "config"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1099,6 +1111,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "bincode",
+ "compression",
  "dir-diff",
  "dogstatsd",
  "fs_extra",
@@ -1116,7 +1129,6 @@ dependencies = [
  "riker",
  "riker-patterns",
  "rusqlite",
- "rust-lzma",
  "serde 1.0.115",
  "serde_derive",
  "serde_json",
@@ -2021,15 +2033,6 @@ name = "rust-ini"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e52c148ef37f8c375d49d5a73aa70713125b7f19095948a923f80afdeb22ec2"
-
-[[package]]
-name = "rust-lzma"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "895dc04daeaeee338bb96e229797902ed3f0675bfc59d5b42e0f0b0c13ac54da"
-dependencies = [
- "pkg-config",
-]
 
 [[package]]
 name = "rustc-demangle"
