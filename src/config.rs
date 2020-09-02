@@ -283,7 +283,12 @@ impl ConfigDir {
         )
     }
 
-    pub fn find_branch_head(&self, remote_name: &str, branch_name: &str) -> Result<String> {
+    pub fn find_branch_head(
+        &self,
+        remote_name: &str,
+        branch_name: &str,
+        refresh: bool,
+    ) -> Result<String> {
         match self {
             ConfigDir::File { .. } => Err(HoganError::GitError {
                 msg: "Unable to perform git actions on a file".to_string(),
@@ -298,8 +303,10 @@ impl ConfigDir {
                 let git_repo = git::build_repo(directory.to_str().unwrap())
                     .with_context(|| "Finding branch head")?;
 
-                git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url))
-                    .with_context(|| "Finding branch head, updating repo")?;
+                if refresh {
+                    git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url))
+                        .with_context(|| "Finding branch head, updating repo")?;
+                }
 
                 git::find_branch_head(&git_repo, &format!("{}/{}", remote_name, branch_name))
                     .with_context(|| "Finding branch head, querying for head")
