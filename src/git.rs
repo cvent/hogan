@@ -193,8 +193,9 @@ pub fn reset(
     url: Option<&Url>,
     sha: Option<&str>,
     force_refresh: bool,
+    allow_fetch: bool,
 ) -> Result<String> {
-    if force_refresh {
+    if force_refresh && allow_fetch {
         fetch(repo, remote, ssh_key_path, url)?;
     };
 
@@ -202,14 +203,21 @@ pub fn reset(
         match detach_head(repo, sha) {
             Ok(_) => {}
             Err(_) => {
-                info!("Couldn't find {}. Trying to refreshing repo", sha);
-                fetch(repo, remote, ssh_key_path, url)?;
-                match detach_head(repo, sha) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!("Unable to find ref {}: {:?}", sha, e);
-                        return Err(e);
+                if allow_fetch {
+                    info!("Couldn't find {}. Trying to refreshing repo", sha);
+                    fetch(repo, remote, ssh_key_path, url)?;
+                    match detach_head(repo, sha) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Unable to find ref {}: {:?}", sha, e);
+                            return Err(e);
+                        }
                     }
+                } else {
+                    return Err(HoganError::UnknownSHA {
+                        sha: sha.to_string(),
+                    })
+                    .context("Unknown SHA when checking out, may resolve next update");
                 }
             }
         }

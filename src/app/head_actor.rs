@@ -177,13 +177,15 @@ impl Actor for HeadRequestHolder {
 struct HeadQueryWorker {
     config: Arc<ConfigDir>,
     last_updated: SystemTime,
+    allow_fetch: bool,
 }
 
-impl ActorFactoryArgs<Arc<ConfigDir>> for HeadQueryWorker {
-    fn create_args(config: Arc<ConfigDir>) -> Self {
+impl ActorFactoryArgs<(Arc<ConfigDir>, bool)> for HeadQueryWorker {
+    fn create_args((config, allow_fetch): (Arc<ConfigDir>, bool)) -> Self {
         HeadQueryWorker {
             config,
             last_updated: SystemTime::now(),
+            allow_fetch,
         }
     }
 }
@@ -211,7 +213,7 @@ impl Receive<PerformQuery> for HeadQueryWorker {
 
         let result = self
             .config
-            .find_branch_head(&"origin", &msg.branch, refresh)
+            .find_branch_head(&"origin", &msg.branch, refresh && self.allow_fetch)
             .map_err(|e| e.into());
 
         let response: HeadRequestHolderMsg = HeadResult {
@@ -243,9 +245,13 @@ impl Receive<PerformQuery> for HeadQueryWorker {
     }
 }
 
-pub fn init_system(sys: &ActorSystem, config: Arc<ConfigDir>) -> HeadRequestActor {
+pub fn init_system(
+    sys: &ActorSystem,
+    config: Arc<ConfigDir>,
+    allow_fetch: bool,
+) -> HeadRequestActor {
     let worker: ActorRef<HeadQueryWorkerMsg> = sys
-        .actor_of_args::<HeadQueryWorker, _>("query_worker", config)
+        .actor_of_args::<HeadQueryWorker, _>("query_worker", (config, allow_fetch))
         .unwrap();
 
     sys.actor_of_args::<HeadRequestHolder, _>("query_holder", worker)

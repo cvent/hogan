@@ -108,6 +108,19 @@ pub enum AppCommand {
         /// random temp directory will be created
         #[structopt(long = "db", value_name = "PATH", default_value = "hogan.db")]
         db_path: String,
+
+        ///The delay between background fetches against the git repo
+        #[structopt(
+            long = "fetch-poller",
+            default_value = "10000",
+            value_name = "MILLISECONDS"
+        )]
+        fetch_poller: u64,
+
+        ///If enabled, will allow requests to trigger fetches against the git repo. Otherwise a background poller will perform the fetches
+        ///on a set interval
+        #[structopt(short, long)]
+        allow_fetch: bool,
     },
 }
 

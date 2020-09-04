@@ -194,7 +194,12 @@ impl ConfigDir {
         }
     }
 
-    pub fn refresh(&self, remote: Option<&str>, target: Option<&str>) -> Result<String> {
+    pub fn refresh(
+        &self,
+        remote: Option<&str>,
+        target: Option<&str>,
+        allow_fetch: bool,
+    ) -> Result<String> {
         match self {
             ConfigDir::File { .. } => Err(HoganError::GitError {
                 msg: "Cannot refresh a file config".to_string(),
@@ -216,6 +221,7 @@ impl ConfigDir {
                     Some(url),
                     target,
                     false,
+                    allow_fetch,
                 )
                 .with_context(|| format!("Error refreshing to {:?}", target))
             }
@@ -310,6 +316,27 @@ impl ConfigDir {
 
                 git::find_branch_head(&git_repo, &format!("{}/{}", remote_name, branch_name))
                     .with_context(|| "Finding branch head, querying for head")
+            }
+        }
+    }
+
+    pub fn fetch_only(&self, remote_name: &str) -> Result<()> {
+        match self {
+            ConfigDir::File { .. } => Err(HoganError::GitError {
+                msg: "Unable to perform git actions on a file".to_string(),
+            })
+            .context("Fetching git repo"),
+            ConfigDir::Git {
+                directory,
+                ssh_key_path,
+                url,
+                ..
+            } => {
+                let git_repo = git::build_repo(directory.to_str().unwrap())
+                    .with_context(|| "Fetching git repo. Building repo")?;
+                git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url))
+                    .with_context(|| "Fetching Repo")?;
+                Ok(())
             }
         }
     }
