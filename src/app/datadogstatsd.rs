@@ -1,17 +1,19 @@
 use dogstatsd::{Client, Options};
 use std::env;
 
+#[derive(Debug)]
 pub struct DdMetrics {
     default_tags: Vec<String>,
     client: Client,
+    enabled: bool,
 }
 impl Default for DdMetrics {
     fn default() -> Self {
-        DdMetrics::new()
+        DdMetrics::new(true)
     }
 }
 impl DdMetrics {
-    pub fn new() -> Self {
+    pub fn new(enabled: bool) -> Self {
         let dd_options = Options::default();
         let key = "ENV";
         let env_name = env::var(key).unwrap_or_else(|_| "unknown".to_string());
@@ -22,9 +24,14 @@ impl DdMetrics {
         DdMetrics {
             default_tags: dd_tags,
             client: Client::new(dd_options).unwrap(),
+            enabled,
         }
     }
+
     pub fn incr(&self, name: &str, additional_tags: Option<Vec<String>>) {
+        if !self.enabled {
+            return;
+        }
         self.client
             .incr(
                 name,
@@ -38,6 +45,9 @@ impl DdMetrics {
 
     #[allow(dead_code)]
     pub fn decr(&self, name: &str, additional_tags: Option<Vec<String>>) {
+        if !self.enabled {
+            return;
+        }
         self.client
             .decr(
                 name,
@@ -51,6 +61,9 @@ impl DdMetrics {
 
     #[allow(dead_code)]
     pub fn gauge(&self, name: &str, additional_tags: Option<Vec<String>>, value: &str) {
+        if !self.enabled {
+            return;
+        }
         self.client
             .gauge(
                 name,
@@ -64,6 +77,9 @@ impl DdMetrics {
     }
 
     pub fn time(&self, name: &str, additional_tags: Option<Vec<String>>, value: i64) {
+        if !self.enabled {
+            return;
+        }
         self.client
             .timing(
                 name,
@@ -84,13 +100,15 @@ impl DdMetrics {
 pub enum CustomMetrics {
     Cache,
     RequestTime,
+    FetchTime,
 }
 
-impl CustomMetrics {
-    pub fn metrics_name(self) -> &'static str {
-        match self {
-            CustomMetrics::Cache => "hogan.cache",
-            CustomMetrics::RequestTime => "hogan.requests",
+impl From<CustomMetrics> for &str {
+    fn from(m: CustomMetrics) -> Self {
+        match m {
+            CustomMetrics::Cache => &"hogan.cache",
+            CustomMetrics::RequestTime => &"hogan.requests",
+            CustomMetrics::FetchTime => &"hogan.fetch",
         }
     }
 }

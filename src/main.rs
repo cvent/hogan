@@ -46,6 +46,8 @@ fn main() -> Result<()> {
             datadog,
             environment_pattern,
             db_path,
+            fetch_poller,
+            allow_fetch,
         } => {
             server::start_up_server(
                 common,
@@ -56,6 +58,8 @@ fn main() -> Result<()> {
                 datadog,
                 environment_pattern,
                 db_path,
+                fetch_poller,
+                allow_fetch,
             )?;
         }
     }

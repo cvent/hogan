@@ -1,6 +1,7 @@
 use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::db;
+use crate::app::fetch_actor;
 use crate::app::head_actor;
 use actix_service::Service;
 use actix_web::middleware::Logger;
@@ -30,7 +31,8 @@ struct ServerState {
     write_lock: Mutex<usize>,
     environments_regex: Regex,
     strict: bool,
-    dd_metrics: Option<DdMetrics>,
+    allow_fetch: bool,
+    dd_metrics: Arc<DdMetrics>,
     environment_pattern: String,
     db_path: String,
     actor_system: ActorSystem,
@@ -95,11 +97,23 @@ pub fn start_up_server(
     datadog: bool,
     environment_pattern: String,
     db_path: String,
+    fetch_poller: u64,
+    allow_fetch: bool,
 ) -> Result<()> {
+    info!("datadog monitoring is setting: {}", datadog);
+    let dd_metrics = Arc::new(DdMetrics::new(datadog));
     let config_dir = Arc::new(ConfigDir::new(common.configs_url, &common.ssh_key)?);
 
     let actor_system = ActorSystem::new()?;
-    let head_request_actor = head_actor::init_system(&actor_system, config_dir.clone());
+    let head_request_actor =
+        head_actor::init_system(&actor_system, config_dir.clone(), allow_fetch);
+
+    fetch_actor::init_system(
+        &actor_system,
+        config_dir.clone(),
+        dd_metrics.clone(),
+        fetch_poller,
+    );
 
     let environments =
         Mutex::new(LruCache::<String, Arc<hogan::config::Environment>>::with_capacity(cache_size));
@@ -111,12 +125,6 @@ pub fn start_up_server(
     let write_lock = Mutex::new(0);
 
     info!("Starting server on {}:{}", address, port);
-    info!("datadog monitoring is setting: {}", datadog);
-    let dd_metrics = if datadog {
-        Some(DdMetrics::new())
-    } else {
-        None
-    };
 
     let state = ServerState {
         environments,
@@ -130,8 +138,9 @@ pub fn start_up_server(
         db_path,
         actor_system,
         head_request_actor,
+        allow_fetch,
     };
-    start_server(address, port, state, datadog)?;
+    start_server(address, port, state)?;
 
     Ok(())
 }
@@ -158,21 +167,19 @@ fn contextualize_path(path: &str) -> &str {
 }
 
 #[actix_rt::main]
-async fn start_server(
-    address: String,
-    port: u16,
-    state: ServerState,
-    dd_enabled: bool,
-) -> Result<()> {
+async fn start_server(address: String, port: u16, state: ServerState) -> Result<()> {
     let binding = format!("{}:{}", address, port);
+    let dd_client = state.dd_metrics.clone();
     let server_state = web::Data::new(state);
 
     HttpServer::new(move || {
+        let dd_client = dd_client.clone();
         actix_web::App::new()
             .wrap(Logger::default())
             .wrap(middleware::Compress::default())
             .app_data(server_state.clone())
             .wrap_fn(move |req, srv| {
+                let dd_client = dd_client.clone();
                 let start_time = if req.path() != "/ok" {
                     Some(SystemTime::now())
                 } else {
@@ -190,18 +197,16 @@ async fn start_server(
                                     "Request for {} {} duration: {} status: {}",
                                     method, path, ms, status
                                 );
-                                if dd_enabled {
-                                    let metrics = DdMetrics::new();
-                                    metrics.time(
-                                        CustomMetrics::RequestTime.metrics_name(),
-                                        Some(vec![
-                                            format!("url:{}", path),
-                                            format!("method:{}", method),
-                                            format!("status:{}", status.as_str()),
-                                        ]),
-                                        ms as i64,
-                                    );
-                                };
+
+                                dd_client.time(
+                                    CustomMetrics::RequestTime.into(),
+                                    Some(vec![
+                                        format!("url:{}", path),
+                                        format!("method:{}", method),
+                                        format!("status:{}", status.as_str()),
+                                    ]),
+                                    ms as i64,
+                                );
                             }
                         }
                         Ok(result)
@@ -462,22 +467,18 @@ fn format_key(sha: &str, env: &str) -> String {
 
 fn register_cache_hit(state: &ServerState, key: &str) {
     debug!("Cache Hit {}", key);
-    if let Some(custom_metrics) = &state.dd_metrics {
-        custom_metrics.incr(
-            CustomMetrics::Cache.metrics_name(),
-            Some(vec!["action:hit".to_string()]),
-        );
-    }
+    state.dd_metrics.incr(
+        CustomMetrics::Cache.into(),
+        Some(vec!["action:hit".to_string()]),
+    );
 }
 
 fn register_cache_miss(state: &ServerState, key: &str) {
     debug!("Cache Miss {}", key);
-    if let Some(custom_metrics) = &state.dd_metrics {
-        custom_metrics.incr(
-            CustomMetrics::Cache.metrics_name(),
-            Some(vec!["action:miss".to_string()]),
-        );
-    }
+    state.dd_metrics.incr(
+        CustomMetrics::Cache.into(),
+        Some(vec!["action:miss".to_string()]),
+    );
 }
 
 fn get_env_from_cache(state: &ServerState, key: &str) -> Option<Arc<hogan::config::Environment>> {
@@ -528,7 +529,9 @@ fn get_env(
 
             register_cache_miss(state, &key);
 
-            let sha = state.config_dir.refresh(remote, Some(sha))?;
+            let sha = state
+                .config_dir
+                .refresh(remote, Some(sha), state.allow_fetch)?;
 
             let filter = match hogan::config::build_env_regex(env, Some(&state.environment_pattern))
             {
@@ -601,7 +604,9 @@ fn get_env_listing(
         }
 
         register_cache_miss(state, sha);
-        let sha = state.config_dir.refresh(remote, Some(sha))?;
+        let sha = state
+            .config_dir
+            .refresh(remote, Some(sha), state.allow_fetch)?;
         let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
 
         Ok(insert_into_env_listing_cache(state, &sha, envs))
