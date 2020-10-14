@@ -101,6 +101,7 @@ pub enum CustomMetrics {
     Cache,
     RequestTime,
     FetchTime,
+    FetchCounter,
 }
 
 impl From<CustomMetrics> for &str {
@@ -109,6 +110,7 @@ impl From<CustomMetrics> for &str {
             CustomMetrics::Cache => &"hogan.cache",
             CustomMetrics::RequestTime => &"hogan.requests",
             CustomMetrics::FetchTime => &"hogan.fetch",
+            CustomMetrics::FetchCounter => &"hogan.fetchcounter",
         }
     }
 }

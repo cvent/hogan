@@ -41,23 +41,41 @@ impl Receive<ExecuteFetch> for FetchActor {
 
     fn receive(&mut self, _ctx: &Context<Self::Msg>, _msg: ExecuteFetch, _sender: Sender) {
         let start_time = SystemTime::now();
-        if let Err(e) = self.config.fetch_only(&"origin") {
-            warn!("Unable to perform scheduled repo fetch {:?}", e);
-        }
+        let fetch_result = self.config.fetch_only(&"origin");
         if let Ok(elapsed_time) = start_time.elapsed() {
-            debug!(
-                "Performed scheduled repo fetch took: {} ms. Poll delay: {} ms",
-                elapsed_time.as_millis(),
-                self.last_updated
-                    .elapsed()
-                    .unwrap_or_else(|_| Duration::from_secs(0))
-                    .as_millis()
-            );
-            self.metrics.time(
-                CustomMetrics::FetchTime.into(),
-                None,
-                elapsed_time.as_millis() as i64,
-            );
+            if let Err(e) = &fetch_result {
+                warn!(
+                    "Unable to perform scheduled repo fetch. Took: {} ms. Error: {:?}",
+                    elapsed_time.as_millis(),
+                    e
+                );
+            } else {
+                debug!(
+                    "Performed scheduled repo fetch took: {} ms. Poll delay: {} ms",
+                    elapsed_time.as_millis(),
+                    self.last_updated
+                        .elapsed()
+                        .unwrap_or_else(|_| Duration::from_secs(0))
+                        .as_millis()
+                );
+
+                //Only record time of successful fetches
+                self.metrics.time(
+                    CustomMetrics::FetchTime.into(),
+                    None,
+                    elapsed_time.as_millis() as i64,
+                );
+            }
+            let counter_tags = if fetch_result.is_err() {
+                vec!["time:error".to_string()]
+            } else if elapsed_time.as_millis() <= self.fetch_delay as u128 {
+                vec!["time:under".to_string()]
+            } else {
+                vec!["time:over".to_string()]
+            };
+
+            self.metrics
+                .incr(CustomMetrics::FetchCounter.into(), Some(counter_tags));
         }
         self.last_updated = SystemTime::now();
     }
