@@ -15,6 +15,7 @@ struct FetchActor {
     last_updated: SystemTime,
     metrics: Arc<DdMetrics>,
     fetch_delay: u64,
+    maintenance_count: u8,
 }
 
 impl ActorFactoryArgs<(Arc<ConfigDir>, Arc<DdMetrics>, u64)> for FetchActor {
@@ -24,6 +25,7 @@ impl ActorFactoryArgs<(Arc<ConfigDir>, Arc<DdMetrics>, u64)> for FetchActor {
             last_updated: SystemTime::now(),
             metrics,
             fetch_delay,
+            maintenance_count: 0,
         }
     }
 }
@@ -77,6 +79,33 @@ impl Receive<ExecuteFetch> for FetchActor {
             self.metrics
                 .incr(CustomMetrics::FetchCounter.into(), Some(counter_tags));
         }
+        if self.maintenance_count >= 10 {
+            self.maintenance_count = 0;
+            let maintenance_start = SystemTime::now();
+            let maintenance_result = self.config.perform_maintenance();
+            if let Ok(elapsed_time) = maintenance_start.elapsed() {
+                if let Err(e) = &maintenance_result {
+                    warn!(
+                        "Unable to perform maintenance on git repo. Took {} ms. Error: {:?}",
+                        elapsed_time.as_millis(),
+                        e
+                    );
+                } else {
+                    info!(
+                        "Performed maintenance on repo took: {} ms",
+                        elapsed_time.as_millis()
+                    );
+                }
+                self.metrics.time(
+                    CustomMetrics::MaintenanceTime.into(),
+                    None,
+                    elapsed_time.as_millis() as i64,
+                );
+            }
+        } else {
+            self.maintenance_count += 1
+        }
+
         self.last_updated = SystemTime::now();
     }
 }

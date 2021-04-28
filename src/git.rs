@@ -3,8 +3,19 @@ use anyhow::{Context, Result};
 use git2::build::RepoBuilder;
 use git2::{AutotagOption, Cred, FetchOptions, Reference, RemoteCallbacks, Repository, ResetType};
 use std::path::Path;
+use std::process::Command;
 use std::str;
 use url::Url;
+
+pub fn ext_clone(url: &Url, path: &Path) -> Result<()> {
+    info!("Cloning {:?} to {:?}", url, path);
+    let mut clone = Command::new("git")
+        .args(&["clone", &url.to_string(), path.to_str().unwrap()])
+        .spawn()?;
+    let result = clone.wait()?;
+    info!("Clone output {}", result);
+    Ok(())
+}
 
 pub fn clone(
     url: &Url,
@@ -110,6 +121,27 @@ fn detach_head(repo: &Repository, sha: &str) -> Result<()> {
     repo.reset(&revspec, ResetType::Hard, None)
         .map_err::<HoganError, _>(|e| e.into())
         .context(format!("Error detaching head to SHA {}", sha))
+}
+
+pub fn ext_fetch(path: &Path, remote: &str) -> Result<()> {
+    info!("Fetching {}", remote);
+    let mut fetch_cmd = Command::new("git")
+        .current_dir(path.to_str().unwrap())
+        .args(&["fetch", remote])
+        .spawn()?;
+
+    fetch_cmd.wait()?;
+    Ok(())
+}
+
+pub fn ext_maintenance(path: &Path) -> Result<()> {
+    info!("Performing maintenance");
+    let mut maintenance_cmd = Command::new("git")
+        .current_dir(path.to_str().unwrap())
+        .args(&["maintenance", "run", "--auto"])
+        .spawn()?;
+    maintenance_cmd.wait()?;
+    Ok(())
 }
 
 pub fn fetch(

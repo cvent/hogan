@@ -144,6 +144,10 @@ pub struct AppCommon {
     /// Throw errors if values do not exist in configs
     #[structopt(short = "s", long = "strict")]
     pub strict: bool,
+
+    /// When true the application will assume an external git application is installed and available in the execution environment
+    #[structopt(short = "g", long = "git")]
+    pub native_git: bool,
 }
 
 impl App {
