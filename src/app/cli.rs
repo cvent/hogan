@@ -24,7 +24,7 @@ pub fn cli(
     let mut templates = template_dir.find(templates_regex);
     println!("Loaded {} template file(s)", templates.len());
 
-    let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key)?;
+    let config_dir = ConfigDir::new(common.configs_url, &common.ssh_key, common.native_git)?;
     let environments = config_dir.find(App::config_regex(&environments_regex)?);
     println!("Loaded {} config file(s)", environments.len());
 

@@ -102,7 +102,11 @@ pub fn start_up_server(
 ) -> Result<()> {
     info!("datadog monitoring is setting: {}", datadog);
     let dd_metrics = Arc::new(DdMetrics::new(datadog));
-    let config_dir = Arc::new(ConfigDir::new(common.configs_url, &common.ssh_key)?);
+    let config_dir = Arc::new(ConfigDir::new(
+        common.configs_url,
+        &common.ssh_key,
+        common.native_git,
+    )?);
 
     let actor_system = ActorSystem::new()?;
     let head_request_actor =
@@ -166,7 +170,7 @@ fn contextualize_path(path: &str) -> &str {
     path.split('/').nth(1).unwrap_or_else(|| &"route")
 }
 
-#[actix_rt::main]
+#[actix_web::main]
 async fn start_server(address: String, port: u16, state: ServerState) -> Result<()> {
     let binding = format!("{}:{}", address, port);
     let dd_client = state.dd_metrics.clone();

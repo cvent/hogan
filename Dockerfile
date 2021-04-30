@@ -36,6 +36,8 @@ RUN apk --update add ca-certificates
 # because we already have a binary built
 FROM alpine:latest
 
+RUN apk --no-cache add git openssh
+
 # Copies standard SSL certs from the "build" stage
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 

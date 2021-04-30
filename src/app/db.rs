@@ -1,7 +1,7 @@
 use anyhow::Result;
 use compression::prelude::*;
 use hogan::config::Environment;
-use rusqlite::{params, Connection, OpenFlags, NO_PARAMS};
+use rusqlite::{params, Connection, OpenFlags};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -20,7 +20,7 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection> {
             key STRING PRIMARY KEY,
             data BLOB,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP )",
-            NO_PARAMS,
+            [],
         )?;
     }
 

@@ -107,27 +107,33 @@ pub enum ConfigDir {
         ssh_key_path: PathBuf,
         temp_dir: TempDir,
         directory: PathBuf,
+        native_git: bool,
     },
 }
 
 impl ConfigDir {
-    pub fn new(url: ConfigUrl, ssh_key_path: &Path) -> Result<ConfigDir> {
+    pub fn new(url: ConfigUrl, ssh_key_path: &Path, native_git: bool) -> Result<ConfigDir> {
         let config_dir = match url {
             ConfigUrl::Git {
                 url,
-                branch,
                 internal_path,
+                branch,
             } => {
                 let temp_dir = tempfile::tempdir().map_err(|e| HoganError::GitError {
                     msg: format!("Unable to create temp directory {:?}", e),
                 })?;
 
-                let git_repo = git::clone(
-                    &url,
-                    branch.as_deref(),
-                    temp_dir.path(),
-                    Some(&ssh_key_path),
-                )?;
+                let git_repo = if native_git {
+                    git::ext_clone(&url, temp_dir.path())?;
+                    git::build_repo(temp_dir.path().to_str().unwrap())?
+                } else {
+                    git::clone(
+                        &url,
+                        branch.as_deref(),
+                        temp_dir.path(),
+                        Some(&ssh_key_path),
+                    )?
+                };
 
                 let head_sha = git::get_head_sha(&git_repo)?;
 
@@ -148,6 +154,7 @@ impl ConfigDir {
                     ssh_key_path,
                     temp_dir,
                     directory,
+                    native_git,
                 })
             }
             ConfigUrl::File { path } => Ok(ConfigDir::File { directory: path }),
@@ -171,7 +178,10 @@ impl ConfigDir {
     pub fn extend(&self, branch: &str) -> Result<ConfigDir> {
         match self {
             ConfigDir::Git {
-                url, ssh_key_path, ..
+                url,
+                ssh_key_path,
+                native_git,
+                ..
             } => ConfigDir::new(
                 ConfigUrl::Git {
                     url: url.clone(),
@@ -179,6 +189,7 @@ impl ConfigDir {
                     internal_path: PathBuf::new(),
                 },
                 ssh_key_path,
+                *native_git,
             ),
             ConfigDir::File { .. } => Err(HoganError::GitError {
                 msg: "Can not extend file config".to_string(),
@@ -320,6 +331,26 @@ impl ConfigDir {
         }
     }
 
+    pub fn perform_maintenance(&self) -> Result<()> {
+        match self {
+            ConfigDir::File { .. } => Err(HoganError::GitError {
+                msg: "Unable to perform git actions on a file".to_string(),
+            })
+            .context("Performing repo maintenance"),
+            ConfigDir::Git {
+                directory,
+                native_git,
+                ..
+            } => {
+                if *native_git {
+                    git::ext_maintenance(&directory.as_path())
+                        .with_context(|| "Performing Maintenance")?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub fn fetch_only(&self, remote_name: &str) -> Result<()> {
         match self {
             ConfigDir::File { .. } => Err(HoganError::GitError {
@@ -330,13 +361,20 @@ impl ConfigDir {
                 directory,
                 ssh_key_path,
                 url,
+                native_git,
                 ..
             } => {
-                let git_repo = git::build_repo(directory.to_str().unwrap())
-                    .with_context(|| "Fetching git repo. Building repo")?;
-                git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url))
-                    .with_context(|| "Fetching Repo")?;
-                Ok(())
+                if *native_git {
+                    git::ext_fetch(&directory.as_path(), remote_name)
+                        .with_context(|| "Fetching git repo")?;
+                    Ok(())
+                } else {
+                    let git_repo = git::build_repo(directory.to_str().unwrap())
+                        .with_context(|| "Fetching git repo. Building repo")?;
+                    git::fetch(&git_repo, remote_name, Some(ssh_key_path), Some(url))
+                        .with_context(|| "Fetching Repo")?;
+                    Ok(())
+                }
             }
         }
     }
@@ -590,6 +628,7 @@ mod tests {
         let config_dir = ConfigDir::new(
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
+            true,
         )
         .unwrap();
         let environments = config_dir.find(build_regex("config\\..+\\.json$").unwrap());
@@ -601,6 +640,7 @@ mod tests {
         let config_dir = ConfigDir::new(
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
+            true,
         )
         .unwrap();
         let environments = config_dir.find(build_regex(r#"config\.test\d?\.json"#).unwrap());
