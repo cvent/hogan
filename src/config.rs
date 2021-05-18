@@ -108,11 +108,19 @@ pub enum ConfigDir {
         temp_dir: TempDir,
         directory: PathBuf,
         native_git: bool,
+        native_fetch: bool,
+        native_clone: bool,
     },
 }
 
 impl ConfigDir {
-    pub fn new(url: ConfigUrl, ssh_key_path: &Path, native_git: bool) -> Result<ConfigDir> {
+    pub fn new(
+        url: ConfigUrl,
+        ssh_key_path: &Path,
+        native_git: bool,
+        native_fetch: bool,
+        native_clone: bool,
+    ) -> Result<ConfigDir> {
         let config_dir = match url {
             ConfigUrl::Git {
                 url,
@@ -123,7 +131,7 @@ impl ConfigDir {
                     msg: format!("Unable to create temp directory {:?}", e),
                 })?;
 
-                let git_repo = if native_git {
+                let git_repo = if native_git && native_clone {
                     git::ext_clone(&url, temp_dir.path())?;
                     git::build_repo(temp_dir.path().to_str().unwrap())?
                 } else {
@@ -155,6 +163,8 @@ impl ConfigDir {
                     temp_dir,
                     directory,
                     native_git,
+                    native_fetch,
+                    native_clone,
                 })
             }
             ConfigUrl::File { path } => Ok(ConfigDir::File { directory: path }),
@@ -181,6 +191,8 @@ impl ConfigDir {
                 url,
                 ssh_key_path,
                 native_git,
+                native_clone,
+                native_fetch,
                 ..
             } => ConfigDir::new(
                 ConfigUrl::Git {
@@ -190,6 +202,8 @@ impl ConfigDir {
                 },
                 ssh_key_path,
                 *native_git,
+                *native_fetch,
+                *native_clone,
             ),
             ConfigDir::File { .. } => Err(HoganError::GitError {
                 msg: "Can not extend file config".to_string(),
@@ -362,9 +376,10 @@ impl ConfigDir {
                 ssh_key_path,
                 url,
                 native_git,
+                native_fetch,
                 ..
             } => {
-                if *native_git {
+                if *native_git && *native_fetch {
                     git::ext_fetch(&directory.as_path(), remote_name)
                         .with_context(|| "Fetching git repo")?;
                     Ok(())
@@ -629,6 +644,8 @@ mod tests {
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
             true,
+            true,
+            true,
         )
         .unwrap();
         let environments = config_dir.find(build_regex("config\\..+\\.json$").unwrap());
@@ -640,6 +657,8 @@ mod tests {
         let config_dir = ConfigDir::new(
             "file://./tests/fixtures/configs".parse().unwrap(),
             Path::new(""),
+            true,
+            true,
             true,
         )
         .unwrap();

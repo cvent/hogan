@@ -106,6 +106,8 @@ pub fn start_up_server(
         common.configs_url,
         &common.ssh_key,
         common.native_git,
+        common.native_fetch,
+        common.native_clone,
     )?);
 
     let actor_system = ActorSystem::new()?;

@@ -145,9 +145,19 @@ pub struct AppCommon {
     #[structopt(short = "s", long = "strict")]
     pub strict: bool,
 
-    /// When true the application will assume an external git application is installed and available in the execution environment
+    /// When enabled the application will assume an external git executable is installed and
+    /// available in the execution environment. This will enable maintenance on the underlying git repo
+    /// This flag must be set to utilize the other native git operations (clone and fetch)
     #[structopt(short = "g", long = "git")]
     pub native_git: bool,
+
+    /// When enabled the application will use the external git executable for performing fetches
+    #[structopt(long = "git-fetch")]
+    pub native_fetch: bool,
+
+    /// When enabled the application will use the external git executable for performing clones
+    #[structopt(long = "git-clone")]
+    pub native_clone: bool,
 }
 
 impl App {
