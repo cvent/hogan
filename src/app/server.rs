@@ -181,46 +181,45 @@ async fn start_server(address: String, port: u16, state: ServerState) -> Result<
     HttpServer::new(move || {
         let dd_client = dd_client.clone();
         actix_web::App::new()
-            .wrap(Logger::default())
-            .wrap(middleware::Compress::default())
-            .app_data(server_state.clone())
             .wrap_fn(move |req, srv| {
-                let dd_client = dd_client.clone();
                 let start_time = if req.path() != "/ok" {
                     Some(SystemTime::now())
                 } else {
                     None
                 };
-                srv.call(req).map(move |res| {
-                    if let Ok(result) = res {
-                        if let Some(time) = start_time {
-                            if let Ok(duration) = time.elapsed() {
-                                let path = contextualize_path(result.request().path());
-                                let method = result.request().method().as_str();
-                                let ms = duration.as_millis();
-                                let status = result.status();
-                                debug!(
-                                    "Request for {} {} duration: {} status: {}",
-                                    method, path, ms, status
-                                );
+                let dd_client = dd_client.clone();
+                let fut = srv.call(req);
 
-                                dd_client.time(
-                                    CustomMetrics::RequestTime.into(),
-                                    Some(vec![
-                                        format!("url:{}", path),
-                                        format!("method:{}", method),
-                                        format!("status:{}", status.as_str()),
-                                    ]),
-                                    ms as i64,
-                                );
-                            }
+                async move {
+                    let res = fut.await?;
+                    if let Some(start) = start_time {
+                        if let Ok(duration) = start.elapsed() {
+                            let path = contextualize_path(res.request().path());
+                            let method = res.request().method().as_str();
+                            let ms = duration.as_millis();
+                            let status = res.status();
+                            debug!(
+                                "Request for {} {} duration: {} status: {}",
+                                method, path, ms, status
+                            );
+
+                            dd_client.time(
+                                CustomMetrics::RequestTime.into(),
+                                Some(vec![
+                                    format!("url:{}", path),
+                                    format!("method:{}", method),
+                                    format!("status:{}", status.as_str()),
+                                ]),
+                                ms as i64,
+                            );
                         }
-                        Ok(result)
-                    } else {
-                        res
-                    }
-                })
+                    };
+                    Ok(res)
+                }
             })
+            .wrap(Logger::default())
+            .wrap(middleware::Compress::default())
+            .app_data(server_state.clone())
             .service(transform_route_sha_env)
             .service(transform_branch_head)
             .service(get_envs)
