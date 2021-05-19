@@ -5,7 +5,7 @@ doc = false
 
 [package]
 name = 'hogan'
-version = '0.12.1'
+version = '0.12.2'
 authors = [
     'Jonathan Morley <jmorley@cvent.com>',
     'Josh Comer <jcomer@cvent.com>',
@@ -43,7 +43,7 @@ compression = '0.1'
 which = '4.0'
 
 [dependencies.tokio]
-version = '1.1'
+version = '0.2'
 features = ['full']
 
 [dependencies.rusqlite]
