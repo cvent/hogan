@@ -7,7 +7,6 @@ use actix_service::Service;
 use actix_web::middleware::Logger;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
-use futures::future::FutureExt;
 use hogan::config::ConfigDir;
 use hogan::error::HoganError;
 use lru_time_cache::LruCache;
@@ -65,9 +64,10 @@ fn create_error_response(e: anyhow::Error) -> HttpResponse {
             body.insert("message", "Unknown sha");
             HttpResponse::NotFound().json(body)
         }
-        HoganError::InvalidTemplate { msg } => {
+        HoganError::InvalidTemplate { msg, env } => {
             let mut body = response_map();
             body.insert("message", &msg);
+            body.insert("environment", &env);
             HttpResponse::BadRequest().json(body)
         }
         HoganError::UnknownEnvironment { sha, env } => {
@@ -280,10 +280,15 @@ async fn transform_route_sha_env(
     }
 }
 
-fn transform_from_sha(data: String, sha: &str, env: &str, state: &ServerState) -> Result<String> {
+fn transform_from_sha(
+    data: String,
+    sha: &str,
+    env_name: &str,
+    state: &ServerState,
+) -> Result<String> {
     let sha = format_sha(sha);
 
-    let env = get_env(&state, None, sha, env)?;
+    let env = get_env(&state, None, sha, env_name)?;
 
     let handlebars = hogan::transform::handlebars(state.strict);
     handlebars
@@ -291,6 +296,7 @@ fn transform_from_sha(data: String, sha: &str, env: &str, state: &ServerState) -
         .map_err(|e| {
             HoganError::InvalidTemplate {
                 msg: format!("Template Error {:?}", e),
+                env: env_name.to_string(),
             }
             .into()
         })
