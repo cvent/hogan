@@ -11,7 +11,7 @@ pub enum HoganError {
     #[error("The requested environment {env} was not found in {sha}")]
     UnknownEnvironment { sha: String, env: String },
     #[error("There was a problem with the provided template")]
-    InvalidTemplate { msg: String },
+    InvalidTemplate { msg: String, env: String },
     #[error("The request was malformed")]
     BadRequest,
     #[error("Request timed out due to internal congestion")]

@@ -40,7 +40,16 @@ pub fn cli(
         for template in &mut templates {
             debug!("Transforming {:?}", template.path);
 
-            let rendered = template.render(&handlebars, &environment)?;
+            let rendered = match template.render(&handlebars, &environment) {
+                Ok(rendered) => rendered,
+                Err(err) => {
+                    error!(
+                        "There was an error rendering environment {} with template {:?}. Error: {:?}",
+                        environment.environment, template.path, err
+                    );
+                    return Err(err);
+                }
+            };
             trace!("Rendered: {:?}", rendered.contents);
 
             if ignore_existing {

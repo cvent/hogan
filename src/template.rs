@@ -52,7 +52,15 @@ impl Template {
 impl Template {
     pub fn render(&self, handlebars: &Handlebars, environment: &Environment) -> Result<Rendered> {
         let mut buf = Cursor::new(Vec::new());
-        handlebars.render_template_to_write(&self.contents, &environment.config_data, &mut buf)?;
+        handlebars
+            .render_template_to_write(&self.contents, &environment.config_data, &mut buf)
+            .with_context(|| {
+                format!(
+                    "Error when rendering file:{:?} env:{}",
+                    self.path.file_name(),
+                    environment.environment,
+                )
+            })?;
 
         Ok(Rendered {
             path: self.path.clone().with_file_name(
