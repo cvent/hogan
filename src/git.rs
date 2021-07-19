@@ -127,7 +127,7 @@ pub fn ext_fetch(path: &Path, remote: &str) -> Result<()> {
     info!("Fetching {}", remote);
     let mut fetch_cmd = Command::new("git")
         .current_dir(path.to_str().unwrap())
-        .args(&["fetch", remote])
+        .args(&["fetch", "--prune", remote])
         .spawn()?;
 
     fetch_cmd.wait()?;
