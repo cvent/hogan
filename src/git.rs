@@ -141,6 +141,12 @@ pub fn ext_maintenance(path: &Path) -> Result<()> {
         .args(&["maintenance", "run", "--auto"])
         .spawn()?;
     maintenance_cmd.wait()?;
+
+    let mut prune_cmd = Command::new("git")
+        .current_dir(path.to_str().unwrap())
+        .args(&["remote", "prune", "origin"])
+        .spawn()?;
+    prune_cmd.wait()?;
     Ok(())
 }
 
