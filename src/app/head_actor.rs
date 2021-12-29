@@ -213,7 +213,7 @@ impl Receive<PerformQuery> for HeadQueryWorker {
 
         let result = self
             .config
-            .find_branch_head(&"origin", &msg.branch, refresh && self.allow_fetch)
+            .find_branch_head("origin", &msg.branch, refresh && self.allow_fetch)
             .map_err(|e| e.into());
 
         let response: HeadRequestHolderMsg = HeadResult {

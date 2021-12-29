@@ -34,11 +34,10 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
     let mut query = conn.prepare("SELECT data FROM hogan WHERE key = ? LIMIT 1")?;
     let key = gen_env_key(sha, env);
     let data: Option<rusqlite::Result<Vec<u8>>> =
-        query.query_map(params![key], |row| Ok(row.get(0)?))?.next();
+        query.query_map(params![key], |row| row.get(0))?.next();
     if let Some(data) = data {
         let decompressed_data = data?
-            .iter()
-            .cloned()
+            .into_iter()
             .decode(&mut BZip2Decoder::new())
             .collect::<Result<Vec<_>, _>>()?;
         let decoded: WritableEnvironment = match bincode::deserialize(&decompressed_data) {
@@ -60,17 +59,17 @@ pub fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) ->
     let key = gen_env_key(sha, env);
     let env_data: WritableEnvironment = data.into();
     let data = bincode::serialize(&env_data)?;
+    let data_len = data.len();
     let compressed_data = data
-        .iter()
-        .cloned()
+        .into_iter()
         .encode(&mut BZip2Encoder::new(6), Action::Finish)
         .collect::<Result<Vec<_>, _>>()?;
     debug!(
         "Writing to DB. Key: {} Size: {} -> {} = {}",
         key,
-        data.len(),
+        data_len,
         compressed_data.len(),
-        data.len() - compressed_data.len()
+        data_len - compressed_data.len()
     );
 
     conn.execute(

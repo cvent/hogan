@@ -108,11 +108,11 @@ pub enum CustomMetrics {
 impl From<CustomMetrics> for &str {
     fn from(m: CustomMetrics) -> Self {
         match m {
-            CustomMetrics::Cache => &"hogan.cache",
-            CustomMetrics::RequestTime => &"hogan.requests",
-            CustomMetrics::FetchTime => &"hogan.fetch",
-            CustomMetrics::FetchCounter => &"hogan.fetchcounter",
-            CustomMetrics::MaintenanceTime => &"hogan.maintenance",
+            CustomMetrics::Cache => "hogan.cache",
+            CustomMetrics::RequestTime => "hogan.requests",
+            CustomMetrics::FetchTime => "hogan.fetch",
+            CustomMetrics::FetchCounter => "hogan.fetchcounter",
+            CustomMetrics::MaintenanceTime => "hogan.maintenance",
         }
     }
 }

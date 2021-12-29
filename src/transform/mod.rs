@@ -80,9 +80,6 @@ mod test {
     ) {
         let config_rendered = handlebars.render_template(template, &config_fixture());
         assert!(!config_rendered.is_ok());
-        assert_eq!(
-            &config_rendered.unwrap_err().as_render_error().unwrap().desc,
-            expected
-        );
+        assert_eq!(&config_rendered.unwrap_err().desc, expected);
     }
 }

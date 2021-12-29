@@ -43,7 +43,7 @@ impl Receive<ExecuteFetch> for FetchActor {
 
     fn receive(&mut self, _ctx: &Context<Self::Msg>, _msg: ExecuteFetch, _sender: Sender) {
         let start_time = SystemTime::now();
-        let fetch_result = self.config.fetch_only(&"origin");
+        let fetch_result = self.config.fetch_only("origin");
         if let Ok(elapsed_time) = start_time.elapsed() {
             if let Err(e) = &fetch_result {
                 warn!(

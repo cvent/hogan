@@ -3,7 +3,7 @@ use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::db;
 use crate::app::fetch_actor;
 use crate::app::head_actor;
-use actix_service::Service;
+use actix_web::dev::Service;
 use actix_web::middleware::Logger;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
@@ -18,7 +18,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
-use tokio::task;
 
 type EnvCache = Mutex<LruCache<String, Arc<hogan::config::Environment>>>;
 type EnvListingCache = Mutex<LruCache<String, Arc<Vec<EnvDescription>>>>;
@@ -169,11 +168,11 @@ impl From<&hogan::config::Environment> for EnvDescription {
 }
 
 fn contextualize_path(path: &str) -> &str {
-    path.split('/').nth(1).unwrap_or_else(|| &"route")
+    path.split('/').nth(1).unwrap_or("route")
 }
 
 #[actix_web::main]
-async fn start_server(address: String, port: u16, state: ServerState) -> Result<()> {
+async fn start_server(address: String, port: u16, state: ServerState) -> std::io::Result<()> {
     let binding = format!("{}:{}", address, port);
     let dd_client = state.dd_metrics.clone();
     let server_state = web::Data::new(state);
@@ -230,9 +229,7 @@ async fn start_server(address: String, port: u16, state: ServerState) -> Result<
     })
     .bind(binding)?
     .run()
-    .await?;
-
-    Ok(())
+    .await
 }
 
 #[derive(Deserialize, Clone)]
@@ -253,7 +250,7 @@ async fn transform_route_sha_env(
 ) -> HttpResponse {
     let sha = params.sha.to_owned();
     let env = params.env.to_owned();
-    let result: Result<String> = match task::spawn_blocking(move || {
+    let result: Result<String> = match web::block(move || {
         //We keep running into folks that are passing in branch name here and it throws off the caching layer and gives inconsistent results
         //This won't catch branch names with all hex values, but would catch the common case like 'master'
         let sha = if !HEX_REGEX.is_match(&sha) {
@@ -288,7 +285,7 @@ fn transform_from_sha(
 ) -> Result<String> {
     let sha = format_sha(sha);
 
-    let env = get_env(&state, None, sha, env_name)?;
+    let env = get_env(state, None, sha, env_name)?;
 
     let handlebars = hogan::transform::handlebars(state.strict);
     handlebars
@@ -309,14 +306,13 @@ struct GetEnvsParams {
 
 #[get("envs/{sha}")]
 async fn get_envs(params: web::Path<GetEnvsParams>, state: web::Data<ServerState>) -> HttpResponse {
-    let result =
-        match task::spawn_blocking(move || get_env_listing(&state, None, &params.sha)).await {
-            Ok(envs) => envs,
-            Err(e) => {
-                warn!("Error joining on getting environments {:?}", e);
-                Err(e.into())
-            }
-        };
+    let result = match web::block(move || get_env_listing(&state, None, &params.sha)).await {
+        Ok(envs) => envs,
+        Err(e) => {
+            warn!("Error joining on getting environments {:?}", e);
+            Err(e.into())
+        }
+    };
 
     match result {
         Ok(envs) => HttpResponse::Ok().json(envs),
@@ -337,8 +333,7 @@ async fn get_config_by_env(
 ) -> HttpResponse {
     let sha = format_sha(&params.sha).to_owned();
 
-    let result = match task::spawn_blocking(move || get_env(&state, None, &sha, &params.env)).await
-    {
+    let result = match web::block(move || get_env(&state, None, &sha, &params.env)).await {
         Ok(env) => env,
         Err(e) => {
             warn!("Error joining on getting environments {:?}", e);
@@ -365,7 +360,7 @@ async fn get_config_by_env_branch(
 ) -> HttpResponse {
     let branch = params.branch_name.to_owned();
     let env = params.env.to_owned();
-    let result = match task::spawn_blocking(move || {
+    let result = match web::block(move || {
         let head_sha = match find_branch_head(&branch, &state) {
             Ok(head_sha) => head_sha,
             Err(e) => return Err(e),
@@ -412,14 +407,13 @@ async fn get_branch_sha(
 ) -> HttpResponse {
     let branch_name = params.branch_name.to_owned();
     debug!("Looking up branch name {}", branch_name);
-    let result =
-        match task::spawn_blocking(move || find_branch_head(&params.branch_name, &state)).await {
-            Ok(r) => r,
-            Err(e) => {
-                warn!("Error joining from branch sha {} {:?}", branch_name, e);
-                Err(e.into())
-            }
-        };
+    let result = match web::block(move || find_branch_head(&params.branch_name, &state)).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Error joining from branch sha {} {:?}", branch_name, e);
+            Err(e.into())
+        }
+    };
 
     match result {
         Ok(head_sha) => HttpResponse::Ok().json(ShaResponse {
@@ -446,7 +440,7 @@ async fn transform_branch_head(
     let branch_name = params.branch_name.to_owned();
     let environment = params.environment.to_owned();
     //Double wrapped Option representing BRANCH(ENVIRONMENT(TEMPLATE))
-    let result = match task::spawn_blocking(move || {
+    let result = match web::block(move || {
         let head_sha = match find_branch_head(&params.branch_name, &state) {
             Ok(sha) => sha,
             Err(e) => return Err(e),
@@ -604,13 +598,13 @@ fn get_env_listing(
     sha: &str,
 ) -> Result<Arc<Vec<EnvDescription>>> {
     let sha = format_sha(sha);
-    if let Some(env) = check_env_listing_cache(state, &sha) {
+    if let Some(env) = check_env_listing_cache(state, sha) {
         Ok(env)
     } else {
         let _write_lock = state.write_lock.lock();
 
         //Check if the cache has what we are looking for again
-        if let Some(env) = check_env_listing_cache(state, &sha) {
+        if let Some(env) = check_env_listing_cache(state, sha) {
             return Ok(env);
         }
 
@@ -633,22 +627,5 @@ fn format_sha(sha: &str) -> &str {
         &sha[0..7]
     } else {
         sha
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use actix_web::{test, web, App};
-
-    #[actix_rt::test]
-    async fn test_ok_route() {
-        let mut app =
-            test::init_service(App::new().route("/ok", web::to(|| HttpResponse::Ok().finish())))
-                .await;
-        let req = test::TestRequest::get().uri("/ok").to_request();
-        let resp = test::call_service(&mut app, req).await;
-
-        assert!(resp.status().is_success());
     }
 }
