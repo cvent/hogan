@@ -225,11 +225,16 @@ async fn start_server(address: String, port: u16, state: ServerState) -> std::io
             .service(get_config_by_env)
             .service(get_config_by_env_branch)
             .service(get_branch_sha)
-            .route("/ok", web::to(|| HttpResponse::Ok().finish()))
+            .service(ok_route)
     })
     .bind(binding)?
     .run()
     .await
+}
+
+#[get("ok")]
+async fn ok_route() -> HttpResponse {
+    HttpResponse::Ok().finish()
 }
 
 #[derive(Deserialize, Clone)]
