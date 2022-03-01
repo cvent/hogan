@@ -29,7 +29,7 @@ impl FromStr for ConfigUrl {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        match Url::parse(&s) {
+        match Url::parse(s) {
             Ok(url) => {
                 if url.scheme() == "file" {
                     Ok(ConfigUrl::File {
@@ -135,12 +135,7 @@ impl ConfigDir {
                     git::ext_clone(&url, temp_dir.path())?;
                     git::build_repo(temp_dir.path().to_str().unwrap())?
                 } else {
-                    git::clone(
-                        &url,
-                        branch.as_deref(),
-                        temp_dir.path(),
-                        Some(&ssh_key_path),
-                    )?
+                    git::clone(&url, branch.as_deref(), temp_dir.path(), Some(ssh_key_path))?
                 };
 
                 let head_sha = git::get_head_sha(&git_repo)?;
@@ -275,7 +270,7 @@ impl ConfigDir {
                 };
 
                 let mut config_data = global.clone(); // Start with global
-                merge(&mut config_data, &parent); // Merge in an env type
+                merge(&mut config_data, parent); // Merge in an env type
                 merge(&mut config_data, &environment.config_data); // Merge with the actual config
 
                 environment.config_data = config_data;
@@ -357,7 +352,7 @@ impl ConfigDir {
                 ..
             } => {
                 if *native_git {
-                    git::ext_maintenance(&directory.as_path())
+                    git::ext_maintenance(directory.as_path())
                         .with_context(|| "Performing Maintenance")?;
                 }
                 Ok(())
@@ -380,7 +375,7 @@ impl ConfigDir {
                 ..
             } => {
                 if *native_git && *native_fetch {
-                    git::ext_fetch(&directory.as_path(), remote_name)
+                    git::ext_fetch(directory.as_path(), remote_name)
                         .with_context(|| "Fetching git repo")?;
                     Ok(())
                 } else {

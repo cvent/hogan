@@ -7,6 +7,7 @@ use crate::app::cli;
 use crate::app::config::{App, AppCommand};
 use crate::app::server;
 use anyhow::{Context, Result};
+
 use structopt::StructOpt;
 
 mod app;

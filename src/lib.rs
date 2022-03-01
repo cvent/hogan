@@ -18,7 +18,7 @@ pub fn find_file_paths(path: &Path, filter: Regex) -> Box<dyn Iterator<Item = Pa
         entry
             .file_name()
             .to_str()
-            .map(|s| filter.is_match(&s))
+            .map(|s| filter.is_match(s))
             .unwrap_or(false)
     }
 

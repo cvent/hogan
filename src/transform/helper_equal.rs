@@ -31,7 +31,7 @@ impl HelperDef for EqualHelper {
             };
 
             match template {
-                Some(ref t) => t.render(r, ctx, rc, out),
+                Some(t) => t.render(r, ctx, rc, out),
                 None => Ok(()),
             }
         } else {

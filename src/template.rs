@@ -63,7 +63,7 @@ impl Template {
             })?;
 
         Ok(Rendered {
-            path: self.path.clone().with_file_name(
+            path: self.path.with_file_name(
                 self.path
                     .file_name()
                     .unwrap()
@@ -83,7 +83,7 @@ impl Template {
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
 
         for environment in environments {
-            let rendered = self.render(&handlebars, &environment)?;
+            let rendered = self.render(handlebars, environment)?;
             zip.start_file(
                 rendered.path.file_name().unwrap().to_string_lossy(),
                 options,
