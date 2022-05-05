@@ -1,3 +1,5 @@
+#![allow(clippy::from_over_into)]
+
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use hogan::config::ConfigDir;
 use riker::actors::*;

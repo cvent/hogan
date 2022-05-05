@@ -1,3 +1,5 @@
+#![allow(clippy::from_over_into)]
+
 use anyhow::Result;
 use futures::executor::block_on;
 use futures::future::RemoteHandle;

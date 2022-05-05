@@ -87,6 +87,7 @@ fn create_error_response(e: anyhow::Error) -> HttpResponse {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn start_up_server(
     common: AppCommon,
     port: u16,
