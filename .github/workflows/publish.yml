@@ -11,6 +11,14 @@ env:
 jobs:
   publish_github:
     name: Publish to GitHub Releases
+    permissions:
+      contents: write
+      packages: write
+      repository-projects: read
+      deployments: write
+      actions: read
+      issues: read
+      statuses: write
     strategy:
       matrix:
         target:
