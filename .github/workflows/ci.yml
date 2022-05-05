@@ -33,7 +33,6 @@ jobs:
           - aarch64-apple-darwin
           # Windows ARM is not currently working
           # - aarch64-pc-windows-msvc
-          - aarch64-unknown-linux-musl
           - x86_64-unknown-linux-musl
         toolchain:
           - stable
@@ -70,9 +69,6 @@ jobs:
           # - target: aarch64-pc-windows-msvc
           #   os: windows-latest
           #   testable: false
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            testable: true
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             testable: true

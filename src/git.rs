@@ -10,7 +10,7 @@ use url::Url;
 pub fn ext_clone(url: &Url, path: &Path) -> Result<()> {
     info!("Cloning {:?} to {:?}", url, path);
     let mut clone = Command::new("git")
-        .args(&["clone", &url.to_string(), path.to_str().unwrap()])
+        .args(&["clone", url.as_ref(), path.to_str().unwrap()])
         .spawn()?;
     let result = clone.wait()?;
     info!("Clone output {}", result);

@@ -24,7 +24,7 @@ impl HelperDef for UrlRmPathHelper {
                 let url = if s.ends_with('/') {
                     &s[..s.len() - 1]
                 } else {
-                    &s
+                    s
                 };
 
                 match Url::parse(url) {
