@@ -22,6 +22,7 @@ use self::helper_yaml_string::YamlStringHelper;
 //To maintain backwards compatibility we are reverting to the original default escape fn
 pub fn old_escape_html(s: &str) -> String {
     let mut output = String::new();
+
     for c in s.chars() {
         match c {
             '<' => output.push_str("&lt;"),
