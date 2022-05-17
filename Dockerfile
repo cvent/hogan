@@ -17,7 +17,7 @@ COPY ./Cargo.* ./
 
 # Builds your dependencies and removes the
 # fake source code from the dummy project
-RUN cargo build --release
+RUN cargo build --release 
 RUN rm src/*.rs
 RUN rm target/x86_64-unknown-linux-musl/release/hogan
 

@@ -269,7 +269,9 @@ impl ConfigDir {
                     &Value::Null
                 };
 
-                let mut config_data = global.clone(); // Start with global
+                let mut config_data = Value::Null; // Start with Null to remove Null values from contexts
+
+                merge(&mut config_data, global); // Merge in global config
                 merge(&mut config_data, parent); // Merge in an env type
                 merge(&mut config_data, &environment.config_data); // Merge with the actual config
 
@@ -608,6 +610,22 @@ mod tests {
 
         let mut merged = global.clone();
 
+        merge(&mut merged, &parent);
+        merge(&mut merged, &doc);
+
+        let expected_json: Value = serde_json::from_str(r#"{"a": 2}"#).unwrap();
+
+        assert_eq!(merged, expected_json)
+    }
+
+    #[test]
+    fn test_null_merge() {
+        let global: Value = serde_json::from_str(r#"{"a": null, "b": null, "c": null}"#).unwrap();
+        let parent = serde_json::from_str(r#"{"a": 1}"#).unwrap();
+        let doc = serde_json::from_str(r#"{"a": 2, "b": null}"#).unwrap();
+
+        let mut merged = Value::Null;
+        merge(&mut merged, &global);
         merge(&mut merged, &parent);
         merge(&mut merged, &doc);
 
