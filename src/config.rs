@@ -13,7 +13,7 @@ use tempfile::{self, TempDir};
 use url::{ParseError, Url};
 use walkdir::WalkDir;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ConfigUrl {
     File {
         path: PathBuf,
@@ -299,7 +299,7 @@ impl ConfigDir {
                 .filter_map(|e| {
                     let path = e.path();
                     let env_type = path.file_stem().unwrap().to_string_lossy().into_owned();
-                    File::open(&path)
+                    File::open(path)
                         .ok()
                         .and_then(|f| serde_json::from_reader(f).ok())
                         .and_then(|c: Config| c.into_environment_type())
@@ -421,6 +421,12 @@ pub struct Environment {
     pub environment: String,
     pub environment_type: Option<String>,
     pub config_data: Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct EnvironmentDescription {
+    pub environment_name: String,
+    pub environment_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

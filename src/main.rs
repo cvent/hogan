@@ -42,25 +42,25 @@ fn main() -> Result<()> {
             common,
             port,
             address,
-            cache_size,
             environments_regex,
             datadog,
             environment_pattern,
             db_path,
             fetch_poller,
             allow_fetch,
+            db_max_age,
         } => {
             server::start_up_server(
                 common,
                 port,
                 address,
-                cache_size,
                 environments_regex,
                 datadog,
                 environment_pattern,
                 db_path,
                 fetch_poller,
                 allow_fetch,
+                db_max_age,
             )?;
         }
     }

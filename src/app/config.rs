@@ -78,9 +78,13 @@ pub enum AppCommand {
         )]
         address: String,
 
-        /// Set the size of the SHA LRU cache
-        #[structopt(long = "cache", default_value = "100", value_name = "CACHE_SIZE")]
-        cache_size: usize,
+        /// Set the oldest age of items to keep in the DB at startup in days
+        #[structopt(
+            long = "db-age",
+            default_value = "120",
+            value_name = "DB_MAX_AGE_IN_DAYS"
+        )]
+        db_max_age: usize,
 
         /// Filter environments to render templates for
         #[structopt(

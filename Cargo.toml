@@ -5,7 +5,7 @@ doc = false
 
 [package]
 name = 'hogan'
-version = '0.13.0'
+version = '0.14.0'
 authors = [
     'Jonathan Morley <jmorley@cvent.com>',
     'Josh Comer <jcomer@cvent.com>',
@@ -38,14 +38,14 @@ thiserror = '1.0'
 url = '2'
 walkdir = '2'
 which = '4.0'
-zip = '0.5'
+zip = '0.6'
 
 [dependencies.rusqlite]
-version = '0.27'
+version = '0.28'
 features = ['bundled']
 
 [dependencies.git2]
-version = '0.14'
+version = '0.15'
 features = ['vendored-openssl']
 
 [dependencies.regex]
@@ -57,7 +57,7 @@ version = '1.0'
 features = ['rc']
 
 [dependencies.uuid]
-version = '0.8'
+version = '1.1'
 features = ['v4']
 
 [dev-dependencies]

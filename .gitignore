@@ -12,3 +12,4 @@
 # Avoid checking in db files
 *.db
 *.json
+.vscode
