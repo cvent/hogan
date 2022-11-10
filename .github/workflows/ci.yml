@@ -95,14 +95,14 @@ jobs:
         with:
           command: build
           use-cross: true
-          args: +${{ matrix.toolchain }} --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }}
       - name: Test
         uses: actions-rs/cargo@v1
         if: matrix.testable
         with:
           command: test
           use-cross: true
-          args: +${{ matrix.toolchain }} --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }}
 
   fmt:
     name: Format
