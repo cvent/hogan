@@ -510,6 +510,7 @@ fn get_env(
     //Check embedded db before git repo
     if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
         debug!("Found environment in the db {} {}", env, sha);
+        register_cache_hit(state, &key);
         Ok(Arc::new(environment))
     } else {
         // This locks mutating the git repo
@@ -572,6 +573,7 @@ fn get_env_listing(
     sha: &str,
 ) -> Result<Arc<Vec<EnvDescription>>> {
     if let Ok(Some(env)) = db::read_sql_env_listing(&state.db_path, sha) {
+        register_cache_hit(state, sha);
         return Ok(Arc::new(env.iter().map(|x| x.into()).collect()));
     } else {
         let _write_lock = match state.write_lock.try_lock_for(Duration::from_secs(20)) {
@@ -586,8 +588,11 @@ fn get_env_listing(
         };
 
         if let Ok(Some(env)) = db::read_sql_env_listing(&state.db_path, sha) {
+            register_cache_hit(state, sha);
             return Ok(Arc::new(env.iter().map(|x| x.into()).collect()));
         }
+
+        register_cache_miss(state, &sha);
 
         let sha = state
             .config_dir
@@ -601,6 +606,7 @@ fn get_env_listing(
         if let Err(e) = db::write_sql_env_listing(&state.db_path, &sha, &to_cache_envs) {
             log::error!("Unable to write env listings to db {} {:?}", sha, e);
         }
+
         Ok(Arc::new(envs))
     }
 }
