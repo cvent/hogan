@@ -553,7 +553,12 @@ fn get_env(
             .find(|e| e.environment == env)
         {
             if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
-                warn!("Unable to write env {} {}::{} to db {:?}", key, sha, env, e);
+                warn!(
+                    "Unable to write env {} {} to db {:?}",
+                    key,
+                    db::gen_env_key(&sha, env),
+                    e
+                );
             };
             Ok(Arc::new(environment.clone()))
         } else {

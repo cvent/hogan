@@ -93,11 +93,11 @@ pub fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) ->
     .map_err(|e| e.into())
 }
 
-fn gen_env_key(sha: &str, env: &str) -> String {
+pub fn gen_env_key(sha: &str, env: &str) -> String {
     format!("{}::{}", env, sha)
 }
 
-fn gen_env_listing_key(sha: &str) -> String {
+pub fn gen_env_listing_key(sha: &str) -> String {
     format!("!listing::{}", sha)
 }
 
