@@ -597,7 +597,7 @@ fn get_env_listing(
             return Ok(Arc::new(env.iter().map(|x| x.into()).collect()));
         }
 
-        register_cache_miss(state, &sha);
+        register_cache_miss(state, sha);
 
         let sha = state
             .config_dir
