@@ -2,9 +2,17 @@ use anyhow::Result;
 use compression::prelude::*;
 use hogan::config::Environment;
 use hogan::config::EnvironmentDescription;
+use riker::actors::*;
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::SystemTime;
+
+use crate::app::datadogstatsd::CustomMetrics;
+
+use super::datadogstatsd::DdMetrics;
 
 fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection> {
     let read_flag = if read_only {
@@ -196,4 +204,90 @@ pub fn read_sql_env_listing(
         debug!("Unable to find {} in sqlite db", key);
         Ok(None)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecuteCleanup {}
+
+#[actor(ExecuteCleanup)]
+#[derive(Debug)]
+struct CleanupActor {
+    db_path: String,
+    max_age: usize,
+    metrics: Arc<DdMetrics>,
+}
+
+impl ActorFactoryArgs<(String, usize, Arc<DdMetrics>)> for CleanupActor {
+    fn create_args((db_path, max_age, metrics): (String, usize, Arc<DdMetrics>)) -> Self {
+        CleanupActor {
+            db_path,
+            max_age,
+            metrics,
+        }
+    }
+}
+
+impl Actor for CleanupActor {
+    type Msg = CleanupActorMsg;
+
+    fn recv(&mut self, ctx: &Context<Self::Msg>, msg: Self::Msg, sender: Sender) {
+        self.receive(ctx, msg, sender);
+    }
+}
+
+impl Receive<ExecuteCleanup> for CleanupActor {
+    type Msg = CleanupActorMsg;
+
+    fn receive(&mut self, _ctx: &Context<Self::Msg>, _msg: ExecuteCleanup, _sender: Sender) {
+        let now = SystemTime::now();
+        match clean_db(&self.db_path, self.max_age) {
+            Ok(rows) => {
+                let duration = now.elapsed().unwrap_or(Duration::from_millis(0));
+                info!(
+                    "Cleaned {} rows from the database older than {} days. Time {} ms",
+                    rows,
+                    self.max_age,
+                    duration.as_millis()
+                );
+                self.metrics.time(
+                    CustomMetrics::DbCleanup.into(),
+                    None,
+                    duration.as_millis() as i64,
+                );
+            }
+            Err(err) => {
+                error!("Unable to clean the db {:?}", err);
+            }
+        }
+    }
+}
+
+pub fn init_db_cleanup_system(
+    system: &ActorSystem,
+    db_path: &str,
+    max_age: usize,
+    metrics: Arc<DdMetrics>,
+) {
+    let cleanup_poller_delay = 24 * 60 * 60; //1 day
+    let worker = system
+        .actor_of_args::<CleanupActor, _>(
+            "db-cleanup-worker",
+            (db_path.to_owned(), max_age, metrics),
+        )
+        .unwrap();
+
+    system.schedule(
+        Duration::from_secs(cleanup_poller_delay),
+        Duration::from_secs(cleanup_poller_delay),
+        worker.clone(),
+        None,
+        ExecuteCleanup {},
+    );
+
+    info!(
+        "Scheduled db cleanup poller for every {} s",
+        cleanup_poller_delay
+    );
+
+    worker.tell(ExecuteCleanup {}, None);
 }

@@ -119,6 +119,8 @@ pub fn start_up_server(
         fetch_poller,
     );
 
+    db::init_db_cleanup_system(&actor_system, &db_path, db_max_age, dd_metrics.clone());
+
     let write_lock = Mutex::new(0);
 
     info!("Starting server on {}:{}", address, port);
