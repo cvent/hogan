@@ -114,7 +114,7 @@ impl From<CustomMetrics> for &str {
             CustomMetrics::FetchTime => "hogan.fetch",
             CustomMetrics::FetchCounter => "hogan.fetchcounter",
             CustomMetrics::MaintenanceTime => "hogan.maintenance",
-            CustomMetrics::DbCleanup => "hogan.dbcleanup"
+            CustomMetrics::DbCleanup => "hogan.dbcleanup",
         }
     }
 }
