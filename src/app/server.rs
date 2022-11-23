@@ -481,10 +481,6 @@ async fn transform_branch_head(
     }
 }
 
-fn format_key(sha: &str, env: &str) -> String {
-    format!("{}::{}", sha, env)
-}
-
 fn register_cache_hit(state: &ServerState, key: &str) {
     debug!("Cache Hit {}", key);
     state.dd_metrics.incr(
@@ -507,7 +503,7 @@ fn get_env(
     sha: &str,
     env: &str,
 ) -> Result<Arc<hogan::config::Environment>> {
-    let key = format_key(sha, env);
+    let key = db::gen_env_key(sha, env);
 
     //Check embedded db before git repo
     if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
