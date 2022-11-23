@@ -1,3 +1,5 @@
+#![allow(clippy::from_over_into)]
+
 use anyhow::Result;
 use compression::prelude::*;
 use hogan::config::Environment;
