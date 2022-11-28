@@ -10,7 +10,7 @@ use url::Url;
 pub fn ext_clone(url: &Url, path: &Path) -> Result<()> {
     info!("Cloning {:?} to {:?}", url, path);
     let mut clone = Command::new("git")
-        .args(&["clone", url.as_ref(), path.to_str().unwrap()])
+        .args(["clone", url.as_ref(), path.to_str().unwrap()])
         .spawn()?;
     let result = clone.wait()?;
     info!("Clone output {}", result);
@@ -127,7 +127,7 @@ pub fn ext_fetch(path: &Path, remote: &str) -> Result<()> {
     info!("Fetching {}", remote);
     let mut fetch_cmd = Command::new("git")
         .current_dir(path.to_str().unwrap())
-        .args(&["fetch", "--prune", remote])
+        .args(["fetch", "--prune", remote])
         .spawn()?;
 
     fetch_cmd.wait()?;
@@ -138,13 +138,13 @@ pub fn ext_maintenance(path: &Path) -> Result<()> {
     info!("Performing maintenance");
     let mut maintenance_cmd = Command::new("git")
         .current_dir(path.to_str().unwrap())
-        .args(&["maintenance", "run", "--auto"])
+        .args(["maintenance", "run", "--auto"])
         .spawn()?;
     maintenance_cmd.wait()?;
 
     let mut prune_cmd = Command::new("git")
         .current_dir(path.to_str().unwrap())
-        .args(&["remote", "prune", "origin"])
+        .args(["remote", "prune", "origin"])
         .spawn()?;
     prune_cmd.wait()?;
     Ok(())
@@ -271,7 +271,7 @@ pub fn build_repo(path: &str) -> Result<Repository> {
 fn find_ref_sha(reference: &Reference) -> Result<String> {
     if let Some(target) = reference.target() {
         let sha = target.to_string();
-        Ok(sha[..7].to_string())
+        Ok(sha)
     } else {
         Err(HoganError::GitError {
             msg: "Unable to convert ref to SHA".to_string(),

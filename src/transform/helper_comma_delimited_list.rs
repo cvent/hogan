@@ -37,8 +37,7 @@ impl HelperDef for CommaDelimitedListHelper {
                         if let Some(block_param) = h.block_param() {
                             let mut new_block = BlockContext::new();
                             let mut block_params = BlockParams::new();
-                            let param = block_param.to_owned();
-                            block_params.add_value(&param, to_json(item))?;
+                            block_params.add_value(block_param, to_json(item))?;
                             new_block.set_block_params(block_params);
                             local_rc.push_block(new_block);
 
