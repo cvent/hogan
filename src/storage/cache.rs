@@ -17,7 +17,7 @@ pub trait Cache {
 }
 
 #[derive(Debug, Clone)]
-struct ExecuteCleanup {}
+pub struct ExecuteCleanup {}
 
 type CacheBox = Arc<Box<dyn Cache + Sync + Send>>;
 
