@@ -78,13 +78,17 @@ pub enum AppCommand {
         )]
         address: String,
 
-        /// Set the oldest age of items to keep in the DB at startup in days
+        /// Set the oldest age of items to keep in the caches (in days)
         #[structopt(
             long = "db-age",
             default_value = "120",
             value_name = "DB_MAX_AGE_IN_DAYS"
         )]
         db_max_age: usize,
+
+        /// Set the size of the in memory cache
+        #[structopt(long = "cache-size", default_value = "64", value_name = "CACHE_SIZE")]
+        cache_size: usize,
 
         /// Filter environments to render templates for
         #[structopt(

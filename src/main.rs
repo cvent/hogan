@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use structopt::StructOpt;
 
 mod app;
+mod storage;
 
 fn main() -> Result<()> {
     let opt = App::from_args();
@@ -49,6 +50,7 @@ fn main() -> Result<()> {
             fetch_poller,
             allow_fetch,
             db_max_age,
+            cache_size,
         } => {
             server::start_up_server(
                 common,
@@ -58,6 +60,7 @@ fn main() -> Result<()> {
                 datadog,
                 environment_pattern,
                 db_path,
+                cache_size,
                 fetch_poller,
                 allow_fetch,
                 db_max_age,

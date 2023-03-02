@@ -1,20 +1,52 @@
 #![allow(clippy::from_over_into)]
-
+use crate::storage::cache::Cache;
 use anyhow::Result;
 use compression::prelude::*;
 use hogan::config::Environment;
 use hogan::config::EnvironmentDescription;
-use riker::actors::*;
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
-use std::time::Duration;
-use std::time::SystemTime;
 
-use crate::app::datadogstatsd::CustomMetrics;
+#[derive(Debug, Clone)]
+pub struct SqliteCache {
+    db_path: String,
+}
 
-use super::datadogstatsd::DdMetrics;
+impl SqliteCache {
+    pub fn new(db_path: &str) -> Self {
+        SqliteCache {
+            db_path: db_path.to_string(),
+        }
+    }
+}
+
+impl Cache for SqliteCache {
+    fn id(&self) -> &str {
+        &self.db_path
+    }
+
+    fn clean(&self, max_age: usize) -> Result<()> {
+        clean_db(&self.db_path, max_age).map(|_| ())
+    }
+
+    fn read_env(&self, env: &str, sha: &str) -> Result<Option<Arc<Environment>>> {
+        read_sql_env(&self.db_path, env, sha)
+    }
+
+    fn write_env(&self, env: &str, sha: &str, data: &Environment) -> Result<()> {
+        write_sql_env(&self.db_path, env, sha, data).map(|_| ())
+    }
+
+    fn read_env_listing(&self, sha: &str) -> Result<Option<Arc<Vec<EnvironmentDescription>>>> {
+        read_sql_env_listing(&self.db_path, sha)
+    }
+
+    fn write_env_listing(&self, sha: &str, data: &[EnvironmentDescription]) -> Result<()> {
+        write_sql_env_listing(&self.db_path, sha, data).map(|_| ())
+    }
+}
 
 fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection> {
     let read_flag = if read_only {
@@ -40,7 +72,7 @@ fn open_sql_db(db_path: &str, read_only: bool) -> Result<Connection> {
     Ok(conn)
 }
 
-pub fn clean_db(db_path: &str, db_max_age: usize) -> Result<usize> {
+fn clean_db(db_path: &str, db_max_age: usize) -> Result<usize> {
     info!(
         "Clearing db {} of all items older than {} days",
         db_path, db_max_age
@@ -53,7 +85,7 @@ pub fn clean_db(db_path: &str, db_max_age: usize) -> Result<usize> {
     Ok(data)
 }
 
-pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Environment>> {
+fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Arc<Environment>>> {
     let conn = open_sql_db(db_path, true)?;
     let mut query = conn.prepare("SELECT data FROM hogan WHERE key LIKE ? || '%' LIMIT 1")?;
     let key = gen_env_key(sha, env);
@@ -71,14 +103,14 @@ pub fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Enviro
                 return Err(e.into());
             }
         };
-        Ok(Some(decoded.into()))
+        Ok(Some(Arc::new(decoded.into())))
     } else {
         debug!("Unable to find {} in sqlite db", key);
         Ok(None)
     }
 }
 
-pub fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) -> Result<usize> {
+fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) -> Result<usize> {
     let conn = open_sql_db(db_path, false)?;
     let key = gen_env_key(sha, env);
     let env_data: WritableEnvironment = data.into();
@@ -103,11 +135,11 @@ pub fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) ->
     .map_err(|e| e.into())
 }
 
-pub fn gen_env_key(sha: &str, env: &str) -> String {
+fn gen_env_key(sha: &str, env: &str) -> String {
     format!("{}::{}", env, sha)
 }
 
-pub fn gen_env_listing_key(sha: &str) -> String {
+fn gen_env_listing_key(sha: &str) -> String {
     format!("!listing::{}", sha)
 }
 
@@ -151,7 +183,7 @@ impl From<&[EnvironmentDescription]> for WritableEnvironmentListing {
     }
 }
 
-pub fn write_sql_env_listing(
+fn write_sql_env_listing(
     db_path: &str,
     sha: &str,
     data: &[EnvironmentDescription],
@@ -180,10 +212,10 @@ pub fn write_sql_env_listing(
     .map_err(|e| e.into())
 }
 
-pub fn read_sql_env_listing(
+fn read_sql_env_listing(
     db_path: &str,
     sha: &str,
-) -> Result<Option<Vec<EnvironmentDescription>>> {
+) -> Result<Option<Arc<Vec<EnvironmentDescription>>>> {
     let conn = open_sql_db(db_path, true)?;
     let mut query = conn.prepare("SELECT data FROM hogan WHERE key LIKE ? || '%' LIMIT 1")?;
     let key = gen_env_listing_key(sha);
@@ -201,95 +233,9 @@ pub fn read_sql_env_listing(
                 return Err(e.into());
             }
         };
-        Ok(Some(decoded.environments))
+        Ok(Some(Arc::new(decoded.environments)))
     } else {
         debug!("Unable to find {} in sqlite db", key);
         Ok(None)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct ExecuteCleanup {}
-
-#[actor(ExecuteCleanup)]
-#[derive(Debug)]
-struct CleanupActor {
-    db_path: String,
-    max_age: usize,
-    metrics: Arc<DdMetrics>,
-}
-
-impl ActorFactoryArgs<(String, usize, Arc<DdMetrics>)> for CleanupActor {
-    fn create_args((db_path, max_age, metrics): (String, usize, Arc<DdMetrics>)) -> Self {
-        CleanupActor {
-            db_path,
-            max_age,
-            metrics,
-        }
-    }
-}
-
-impl Actor for CleanupActor {
-    type Msg = CleanupActorMsg;
-
-    fn recv(&mut self, ctx: &Context<Self::Msg>, msg: Self::Msg, sender: Sender) {
-        self.receive(ctx, msg, sender);
-    }
-}
-
-impl Receive<ExecuteCleanup> for CleanupActor {
-    type Msg = CleanupActorMsg;
-
-    fn receive(&mut self, _ctx: &Context<Self::Msg>, _msg: ExecuteCleanup, _sender: Sender) {
-        let now = SystemTime::now();
-        match clean_db(&self.db_path, self.max_age) {
-            Ok(rows) => {
-                let duration = now.elapsed().unwrap_or(Duration::from_millis(0));
-                info!(
-                    "Cleaned {} rows from the database older than {} days. Time {} ms",
-                    rows,
-                    self.max_age,
-                    duration.as_millis()
-                );
-                self.metrics.time(
-                    CustomMetrics::DbCleanup.into(),
-                    None,
-                    duration.as_millis() as i64,
-                );
-            }
-            Err(err) => {
-                error!("Unable to clean the db {:?}", err);
-            }
-        }
-    }
-}
-
-pub fn init_db_cleanup_system(
-    system: &ActorSystem,
-    db_path: &str,
-    max_age: usize,
-    metrics: Arc<DdMetrics>,
-) {
-    let cleanup_poller_delay = 24 * 60 * 60; //1 day
-    let worker = system
-        .actor_of_args::<CleanupActor, _>(
-            "db-cleanup-worker",
-            (db_path.to_owned(), max_age, metrics),
-        )
-        .unwrap();
-
-    system.schedule(
-        Duration::from_secs(cleanup_poller_delay),
-        Duration::from_secs(cleanup_poller_delay),
-        worker.clone(),
-        None,
-        ExecuteCleanup {},
-    );
-
-    info!(
-        "Scheduled db cleanup poller for every {} s",
-        cleanup_poller_delay
-    );
-
-    worker.tell(ExecuteCleanup {}, None);
 }

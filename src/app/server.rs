@@ -1,8 +1,11 @@
 use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
-use crate::app::db;
 use crate::app::fetch_actor;
 use crate::app::head_actor;
+use crate::storage::cache::Cache;
+use crate::storage::cache::CleanupActor;
+use crate::storage::lru::LruEnvCache;
+use crate::storage::sqlite::SqliteCache;
 use actix_web::dev::Service;
 use actix_web::middleware::Logger;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
@@ -27,7 +30,7 @@ struct ServerState {
     allow_fetch: bool,
     dd_metrics: Arc<DdMetrics>,
     environment_pattern: String,
-    db_path: String,
+    caches: Vec<Arc<Box<dyn Cache + Sync + Send>>>,
     actor_system: ActorSystem,
     head_request_actor: head_actor::HeadRequestActor,
 }
@@ -91,13 +94,22 @@ pub fn start_up_server(
     datadog: bool,
     environment_pattern: String,
     db_path: String,
+    cache_size: usize,
     fetch_poller: u64,
     allow_fetch: bool,
     db_max_age: usize,
 ) -> Result<()> {
-    if let Err(e) = db::clean_db(&db_path, db_max_age) {
-        warn!("Unable to clean db on startup: {:?}", e);
-    };
+    let caches: Vec<Arc<Box<dyn Cache + Send + Sync>>> = vec![
+        Arc::new(Box::new(LruEnvCache::new("lru", cache_size)?)),
+        Arc::new(Box::new(SqliteCache::new(&db_path))),
+    ];
+
+    for cache in caches.iter() {
+        if let Err(e) = cache.clean(db_max_age) {
+            warn!("Unable to clean {} cache on startup: {:?}", cache.id(), e);
+        };
+    }
+
     info!("datadog monitoring is setting: {}", datadog);
     let dd_metrics = Arc::new(DdMetrics::new(datadog));
     let config_dir = Arc::new(ConfigDir::new(
@@ -119,7 +131,7 @@ pub fn start_up_server(
         fetch_poller,
     );
 
-    db::init_db_cleanup_system(&actor_system, &db_path, db_max_age, dd_metrics.clone());
+    CleanupActor::init_db_cleanup_system(&actor_system, &caches, db_max_age, dd_metrics.clone());
 
     let write_lock = Mutex::new(0);
 
@@ -132,7 +144,7 @@ pub fn start_up_server(
         strict: common.strict,
         dd_metrics,
         environment_pattern,
-        db_path,
+        caches,
         actor_system,
         head_request_actor,
         allow_fetch,
@@ -481,20 +493,52 @@ async fn transform_branch_head(
     }
 }
 
-fn register_cache_hit(state: &ServerState, key: &str) {
-    debug!("Cache Hit {}", key);
+fn register_cache_hit(state: &ServerState) {
     state.dd_metrics.incr(
         CustomMetrics::Cache.into(),
         Some(vec!["action:hit".to_string()]),
     );
 }
 
-fn register_cache_miss(state: &ServerState, key: &str) {
-    debug!("Cache Miss {}", key);
+fn register_cache_miss(state: &ServerState) {
     state.dd_metrics.incr(
         CustomMetrics::Cache.into(),
         Some(vec!["action:miss".to_string()]),
     );
+}
+
+fn check_caches_env(
+    caches: &[Arc<Box<dyn Cache + Send + Sync>>],
+    env: &str,
+    sha: &str,
+) -> Option<Arc<hogan::config::Environment>> {
+    for (index, cache) in caches.iter().enumerate() {
+        if let Some(environment) = cache.read_env(env, sha).unwrap_or(None) {
+            debug!("Found env in {} cache. Env {} Sha {}", cache.id(), env, sha);
+            if index > 0 {
+                //Fill in the caches which are missing the data
+                for missing_cache in caches.iter().take(index) {
+                    debug!(
+                        "Writing env to {} cache. Env {} Sha {}",
+                        missing_cache.id(),
+                        env,
+                        sha
+                    );
+                    if let Err(e) = missing_cache.write_env(env, sha, environment.as_ref()) {
+                        error!(
+                            "Unable to write sha {} env {} to {} cache: {:?}",
+                            sha,
+                            env,
+                            missing_cache.id(),
+                            e
+                        )
+                    }
+                }
+            }
+            return Some(environment);
+        }
+    }
+    None
 }
 
 fn get_env(
@@ -503,71 +547,99 @@ fn get_env(
     sha: &str,
     env: &str,
 ) -> Result<Arc<hogan::config::Environment>> {
-    let key = db::gen_env_key(sha, env);
+    let caches = &state.caches;
 
-    //Check embedded db before git repo
-    if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
-        debug!("Found environment in the db {} {}", env, sha);
-        register_cache_hit(state, &key);
-        Ok(Arc::new(environment))
-    } else {
-        // This locks mutating the git repo
-        let _write_lock = match state.write_lock.try_lock_for(Duration::from_secs(20)) {
-            Some(lock) => lock,
-            None => {
-                warn!(
-                    "Unable to acquire write lock in a timely manner: {} {}",
-                    sha, env
-                );
-                return Err(HoganError::InternalTimeout.into());
-            }
-        };
+    //Check caches before git repo
+    if let Some(environment) = check_caches_env(caches, env, sha) {
+        register_cache_hit(state);
+        return Ok(environment);
+    }
 
-        //Since waiting for the lock may take unknown time double check if the cache now contains the env we are looking for
-        if let Some(environment) = db::read_sql_env(&state.db_path, env, sha).unwrap_or(None) {
-            register_cache_hit(state, &key);
-            debug!("Avoided git lock for config lookup: {}", key);
-            return Ok(Arc::new(environment));
+    // This locks mutating the git repo
+    let _write_lock = match state.write_lock.try_lock_for(Duration::from_secs(20)) {
+        Some(lock) => lock,
+        None => {
+            warn!(
+                "Unable to acquire write lock in a timely manner: {} {}",
+                sha, env
+            );
+            return Err(HoganError::InternalTimeout.into());
         }
+    };
 
-        register_cache_miss(state, &key);
+    //Since waiting for the lock may take unknown time double check if the cache now contains the env we are looking for
+    if let Some(environment) = check_caches_env(caches, env, sha) {
+        register_cache_hit(state);
+        return Ok(environment);
+    }
 
-        let sha = state
-            .config_dir
-            .refresh(remote, Some(sha), state.allow_fetch)?;
+    register_cache_miss(state);
 
-        let filter = match hogan::config::build_env_regex(env, Some(&state.environment_pattern)) {
-            Ok(filter) => filter,
-            Err(e) => {
-                warn!("Incompatible env name: {} {:?}", env, e);
-                //In an error scenario we'll still try and match against all configs
-                state.environments_regex.clone()
-            }
-        };
-        if let Some(environment) = state
-            .config_dir
-            .find(filter)
-            .iter()
-            .find(|e| e.environment == env)
-        {
-            if let Err(e) = db::write_sql_env(&state.db_path, env, &sha, environment) {
-                warn!(
-                    "Unable to write env {} {} to db {:?}",
-                    key,
-                    db::gen_env_key(&sha, env),
+    let sha = state
+        .config_dir
+        .refresh(remote, Some(sha), state.allow_fetch)?;
+
+    let filter = match hogan::config::build_env_regex(env, Some(&state.environment_pattern)) {
+        Ok(filter) => filter,
+        Err(e) => {
+            warn!("Incompatible env name: {} {:?}", env, e);
+            //In an error scenario we'll still try and match against all configs
+            state.environments_regex.clone()
+        }
+    };
+    if let Some(environment) = state
+        .config_dir
+        .find(filter)
+        .iter()
+        .find(|e| e.environment == env)
+    {
+        for cache in caches {
+            if let Err(e) = cache.write_env(env, &sha, environment) {
+                error!(
+                    "Unable to write sha {} env {} to {} cache: {:?}",
+                    sha,
+                    env,
+                    cache.id(),
                     e
-                );
-            };
-            Ok(Arc::new(environment.clone()))
-        } else {
-            debug!("Unable to find the env {} in {}", env, sha);
-            Err(HoganError::UnknownEnvironment {
-                sha,
-                env: env.to_owned(),
+                )
             }
-            .into())
+        }
+        Ok(Arc::new(environment.clone()))
+    } else {
+        debug!("Unable to find the env {} in {}", env, sha);
+        Err(HoganError::UnknownEnvironment {
+            sha,
+            env: env.to_owned(),
+        }
+        .into())
+    }
+}
+
+fn check_caches_env_listing(
+    caches: &[Arc<Box<dyn Cache + Send + Sync>>],
+    sha: &str,
+) -> Option<Arc<Vec<hogan::config::EnvironmentDescription>>> {
+    for (index, cache) in caches.iter().enumerate() {
+        if let Some(environment_description) = cache.read_env_listing(sha).unwrap_or(None) {
+            if index > 0 {
+                //Fill in the caches which are missing the data
+                for missing_cache in caches.iter().take(index) {
+                    if let Err(e) =
+                        missing_cache.write_env_listing(sha, environment_description.as_ref())
+                    {
+                        log::error!(
+                            "Unable to write env listings to {} cache {} {:?}",
+                            missing_cache.id(),
+                            sha,
+                            e
+                        );
+                    }
+                }
+            }
+            return Some(environment_description);
         }
     }
+    None
 }
 
 fn get_env_listing(
@@ -575,43 +647,53 @@ fn get_env_listing(
     remote: Option<&str>,
     sha: &str,
 ) -> Result<Arc<Vec<EnvDescription>>> {
-    if let Ok(Some(env)) = db::read_sql_env_listing(&state.db_path, sha) {
-        register_cache_hit(state, sha);
+    let caches = &state.caches;
+
+    if let Some(env) = check_caches_env_listing(caches, sha) {
+        register_cache_hit(state);
         return Ok(Arc::new(env.iter().map(|x| x.into()).collect()));
-    } else {
-        let _write_lock = match state.write_lock.try_lock_for(Duration::from_secs(20)) {
-            Some(l) => l,
-            None => {
-                log::warn!(
-                    "Unable to acquire write lock for env listing in a timely manner {}",
-                    sha
-                );
-                return Err(HoganError::InternalTimeout.into());
-            }
-        };
-
-        if let Ok(Some(env)) = db::read_sql_env_listing(&state.db_path, sha) {
-            register_cache_hit(state, sha);
-            return Ok(Arc::new(env.iter().map(|x| x.into()).collect()));
-        }
-
-        register_cache_miss(state, sha);
-
-        let sha = state
-            .config_dir
-            .refresh(remote, Some(sha), state.allow_fetch)?;
-
-        let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
-        let to_cache_envs = envs
-            .iter()
-            .map(|x| x.into())
-            .collect::<Vec<hogan::config::EnvironmentDescription>>();
-        if let Err(e) = db::write_sql_env_listing(&state.db_path, &sha, &to_cache_envs) {
-            log::error!("Unable to write env listings to db {} {:?}", sha, e);
-        }
-
-        Ok(Arc::new(envs))
     }
+
+    let _write_lock = match state.write_lock.try_lock_for(Duration::from_secs(20)) {
+        Some(l) => l,
+        None => {
+            log::warn!(
+                "Unable to acquire write lock for env listing in a timely manner {}",
+                sha
+            );
+            return Err(HoganError::InternalTimeout.into());
+        }
+    };
+
+    if let Some(env) = check_caches_env_listing(caches, sha) {
+        register_cache_hit(state);
+        return Ok(Arc::new(env.iter().map(|x| x.into()).collect()));
+    }
+
+    register_cache_miss(state);
+
+    let sha = state
+        .config_dir
+        .refresh(remote, Some(sha), state.allow_fetch)?;
+
+    let envs = format_envs(&state.config_dir.find(state.environments_regex.clone()));
+    let to_cache_envs = envs
+        .iter()
+        .map(|x| x.into())
+        .collect::<Vec<hogan::config::EnvironmentDescription>>();
+
+    for cache in caches {
+        if let Err(e) = cache.write_env_listing(&sha, &to_cache_envs) {
+            log::error!(
+                "Unable to write env listings to {} cache {} {:?}",
+                cache.id(),
+                sha,
+                e
+            );
+        }
+    }
+
+    Ok(Arc::new(envs))
 }
 
 fn format_envs(envs: &[hogan::config::Environment]) -> Vec<EnvDescription> {
