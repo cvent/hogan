@@ -65,13 +65,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
           profile: minimal
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.2.1
       - name: Archive Release
         uses: taiki-e/upload-rust-binary-action@v1
         with:
