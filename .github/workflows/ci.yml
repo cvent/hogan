@@ -81,6 +81,8 @@ jobs:
           components: clippy
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.2.1
+        with:
+          key: ${{ matrix.target }}
       - name: Install Cross
         uses: actions-rs/install@v0.1
         with:

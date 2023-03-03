@@ -74,6 +74,8 @@ jobs:
           profile: minimal
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.2.1
+        with:
+          key: ${{ matrix.target }}
       - name: Archive Release
         uses: taiki-e/upload-rust-binary-action@v1
         with:
