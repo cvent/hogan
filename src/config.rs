@@ -299,7 +299,7 @@ impl ConfigDir {
                 .filter_map(|e| {
                     let path = e.path();
                     let env_type = path.file_stem().unwrap().to_string_lossy().into_owned();
-                    File::open(&path)
+                    File::open(path)
                         .ok()
                         .and_then(|f| serde_json::from_reader(f).ok())
                         .and_then(|c: Config| c.into_environment_type())

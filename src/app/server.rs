@@ -291,6 +291,18 @@ fn transform_from_sha(
 ) -> Result<String> {
     let sha = format_sha(sha);
 
+    let possible_envs = get_env_listing(state, None, sha)?;
+
+    //This is a check to see if the environment being queried even exists in the sha. Since envs are already cached, this hit is better than
+    //the cost of a full miss
+    if !possible_envs.iter().any(|env| env.name == env_name) {
+        return Err(HoganError::UnknownEnvironment {
+            sha: sha.to_string(),
+            env: env_name.to_string(),
+        }
+        .into());
+    }
+
     let env = get_env(state, None, sha, env_name)?;
 
     let handlebars = hogan::transform::handlebars(state.strict);
