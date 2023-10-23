@@ -53,6 +53,7 @@ pub fn handlebars<'a>(strict: bool) -> Handlebars<'a> {
 
 #[cfg(test)]
 mod test {
+
     use super::*;
     use serde_json::{self, Value};
 
@@ -81,6 +82,6 @@ mod test {
     ) {
         let config_rendered = handlebars.render_template(template, &config_fixture());
         assert!(!config_rendered.is_ok());
-        assert_eq!(&config_rendered.unwrap_err().desc, expected);
+        assert!(&config_rendered.unwrap_err().to_string().ends_with(expected));
     }
 }

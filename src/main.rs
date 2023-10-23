@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use structopt::StructOpt;
 
 mod app;
-
+mod storage;
 fn main() -> Result<()> {
     let opt = App::from_args();
 

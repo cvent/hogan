@@ -423,6 +423,21 @@ pub struct Environment {
     pub config_data: Value,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct EnvironmentDescription {
+    pub environment_name: String,
+    pub environment_type: Option<String>,
+}
+
+impl From<&Environment> for EnvironmentDescription {
+    fn from(value: &Environment) -> Self {
+        EnvironmentDescription {
+            environment_name: value.environment.to_owned(),
+            environment_type: value.environment_type.to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 struct EnvironmentType {

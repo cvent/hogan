@@ -1,3 +1,6 @@
 {
-  "WhiteSource Advise.Diff.BaseBranch": "master"
+  "WhiteSource Advise.Diff.BaseBranch": "master",
+  "cSpell.words": [
+    "actix"
+  ]
 }
