@@ -47,6 +47,7 @@ fn main() -> Result<()> {
             datadog,
             environment_pattern,
             db_path,
+            db_max_age,
             fetch_poller,
             allow_fetch,
         } => {
@@ -59,6 +60,7 @@ fn main() -> Result<()> {
                 datadog,
                 environment_pattern,
                 db_path,
+                db_max_age,
                 fetch_poller,
                 allow_fetch,
             )?;

@@ -109,6 +109,10 @@ pub enum AppCommand {
         #[structopt(long = "db", value_name = "PATH", default_value = "hogan.db")]
         db_path: String,
 
+        ///Maximum age of db entries based on number of days
+        #[structopt(long = "db-max-age", value_name = "DAYS", default_value = "90")]
+        db_max_age: usize,
+
         ///The delay between background fetches against the git repo
         #[structopt(
             long = "fetch-poller",

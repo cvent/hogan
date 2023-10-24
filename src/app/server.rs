@@ -2,7 +2,7 @@ use crate::app::config::AppCommon;
 use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::fetch_actor;
 use crate::app::head_actor;
-use crate::storage::cache::Cache;
+use crate::storage::cache::{Cache, CleanupActor};
 use crate::storage::{lru, multi, sqlite};
 use actix_web::dev::Service;
 use actix_web::middleware::Logger;
@@ -92,6 +92,7 @@ pub fn start_up_server(
     datadog: bool,
     environment_pattern: String,
     db_path: String,
+    db_max_age: usize,
     fetch_poller: u64,
     allow_fetch: bool,
 ) -> Result<()> {
@@ -120,6 +121,13 @@ pub fn start_up_server(
         Box::new(lru::LruEnvCache::new("lru", cache_size)?),
         Box::new(sqlite::SqliteCache::new(&db_path)),
     ]));
+
+    CleanupActor::init_db_cleanup_system(
+        &actor_system,
+        &[Arc::new(Box::new(sqlite::SqliteCache::new(&db_path)))],
+        db_max_age,
+        dd_metrics.clone(),
+    );
 
     let write_lock = Mutex::new(0);
 
