@@ -299,7 +299,7 @@ impl ConfigDir {
                 .filter_map(|e| {
                     let path = e.path();
                     let env_type = path.file_stem().unwrap().to_string_lossy().into_owned();
-                    File::open(&path)
+                    File::open(path)
                         .ok()
                         .and_then(|f| serde_json::from_reader(f).ok())
                         .and_then(|c: Config| c.into_environment_type())
@@ -421,6 +421,21 @@ pub struct Environment {
     pub environment: String,
     pub environment_type: Option<String>,
     pub config_data: Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct EnvironmentDescription {
+    pub environment_name: String,
+    pub environment_type: Option<String>,
+}
+
+impl From<&Environment> for EnvironmentDescription {
+    fn from(value: &Environment) -> Self {
+        EnvironmentDescription {
+            environment_name: value.environment.to_owned(),
+            environment_type: value.environment_type.to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

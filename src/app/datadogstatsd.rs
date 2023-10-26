@@ -103,6 +103,7 @@ pub enum CustomMetrics {
     FetchTime,
     FetchCounter,
     MaintenanceTime,
+    DbCleanup,
 }
 
 impl From<CustomMetrics> for &str {
@@ -113,6 +114,7 @@ impl From<CustomMetrics> for &str {
             CustomMetrics::FetchTime => "hogan.fetch",
             CustomMetrics::FetchCounter => "hogan.fetchcounter",
             CustomMetrics::MaintenanceTime => "hogan.maintenance",
+            CustomMetrics::DbCleanup => "hogan.dbcleanup",
         }
     }
 }
