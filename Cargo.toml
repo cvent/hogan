@@ -5,7 +5,7 @@ doc = false
 
 [package]
 name = 'hogan'
-version = '0.13.1'
+version = '0.13.2'
 authors = [
     'Jonathan Morley <jmorley@cvent.com>',
     'Josh Comer <jcomer@cvent.com>',
@@ -27,6 +27,7 @@ log = '0.4'
 lru_time_cache = '0.11'
 lru = '0.12'
 parking_lot = '0.12'
+redis = '0.23'
 riker = '0.4'
 riker-patterns = '0.4'
 serde_derive = '1.0'
@@ -38,11 +39,12 @@ tempfile = '3'
 thiserror = '1.0'
 url = '2'
 walkdir = '2'
-which = '4.4'
+which = '5.0'
 zip = '0.6'
 
+
 [dependencies.rusqlite]
-version = '0.29'
+version = '0.30'
 features = ['bundled']
 
 [dependencies.git2]

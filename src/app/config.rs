@@ -106,12 +106,16 @@ pub enum AppCommand {
 
         ///Filepath to the embedded db for storing environments. Will be created if it doesn't exist. If not provided a
         /// random temp directory will be created
-        #[structopt(long = "db", value_name = "PATH", default_value = "hogan.db")]
-        db_path: String,
+        #[structopt(long = "db", value_name = "PATH")]
+        db_path: Option<String>,
 
         ///Maximum age of db entries based on number of days
         #[structopt(long = "db-max-age", value_name = "DAYS", default_value = "90")]
         db_max_age: usize,
+
+        ///Connection string for redis server. Off by default. Will use "db-max-age" as TTL value
+        #[structopt(long = "redis", value_name = "CONNECTION")]
+        redis_connection: Option<String>,
 
         ///The delay between background fetches against the git repo
         #[structopt(

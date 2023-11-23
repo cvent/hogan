@@ -1,12 +1,11 @@
 #![allow(clippy::from_over_into)]
 use crate::storage::cache::Cache;
+
+use super::cache;
 use anyhow::Result;
-use compression::prelude::*;
 use hogan::config::Environment;
 use hogan::config::EnvironmentDescription;
 use rusqlite::{params, Connection, OpenFlags};
-use serde::Deserialize;
-use serde::Serialize;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -92,18 +91,8 @@ fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Arc<Enviro
     let data: Option<rusqlite::Result<Vec<u8>>> =
         query.query_map(params![key], |row| row.get(0))?.next();
     if let Some(data) = data {
-        let decompressed_data = data?
-            .into_iter()
-            .decode(&mut BZip2Decoder::new())
-            .collect::<Result<Vec<_>, _>>()?;
-        let decoded: WritableEnvironment = match bincode::deserialize(&decompressed_data) {
-            Ok(environment) => environment,
-            Err(e) => {
-                warn!("Unable to deserialize env: {} {:?}", key, e);
-                return Err(e.into());
-            }
-        };
-        Ok(Some(Arc::new(decoded.into())))
+        let deserialized_data = cache::deserialize_env(data?)?;
+        Ok(Some(Arc::new(deserialized_data)))
     } else {
         debug!("Unable to find {} in sqlite db", key);
         Ok(None)
@@ -113,24 +102,11 @@ fn read_sql_env(db_path: &str, env: &str, sha: &str) -> Result<Option<Arc<Enviro
 fn write_sql_env(db_path: &str, env: &str, sha: &str, data: &Environment) -> Result<usize> {
     let conn = open_sql_db(db_path, false)?;
     let key = gen_env_key(sha, env);
-    let env_data: WritableEnvironment = data.into();
-    let data = bincode::serialize(&env_data)?;
-    let data_len = data.len();
-    let compressed_data = data
-        .into_iter()
-        .encode(&mut BZip2Encoder::new(6), Action::Finish)
-        .collect::<Result<Vec<_>, _>>()?;
-    debug!(
-        "Writing to DB. Key: {} Size: {} -> {} = {}",
-        key,
-        data_len,
-        compressed_data.len(),
-        data_len - compressed_data.len()
-    );
+    let serialized_data = cache::serialize_env(data)?;
 
     conn.execute(
         "INSERT INTO hogan (key, data) VALUES (?1, ?2)",
-        params![key, compressed_data],
+        params![key, serialized_data],
     )
     .map_err(|e| e.into())
 }
@@ -143,46 +119,6 @@ fn gen_env_listing_key(sha: &str) -> String {
     format!("!listing::{}", sha)
 }
 
-#[derive(Default, Serialize, Deserialize, Debug)]
-struct WritableEnvironment {
-    config_data: String,
-    environment: String,
-    environment_type: Option<String>,
-}
-
-impl From<&Environment> for WritableEnvironment {
-    fn from(environment: &Environment) -> Self {
-        WritableEnvironment {
-            config_data: environment.config_data.to_string(),
-            environment: environment.environment.to_owned(),
-            environment_type: environment.environment_type.to_owned(),
-        }
-    }
-}
-
-impl From<WritableEnvironment> for Environment {
-    fn from(environment: WritableEnvironment) -> Self {
-        Environment {
-            config_data: serde_json::from_str(&environment.config_data).unwrap(),
-            environment: environment.environment.to_owned(),
-            environment_type: environment.environment_type.to_owned(),
-        }
-    }
-}
-
-#[derive(Default, Serialize, Deserialize, Debug)]
-struct WritableEnvironmentListing {
-    environments: Vec<EnvironmentDescription>,
-}
-
-impl From<&[EnvironmentDescription]> for WritableEnvironmentListing {
-    fn from(environments: &[EnvironmentDescription]) -> Self {
-        Self {
-            environments: environments.to_owned(),
-        }
-    }
-}
-
 fn write_sql_env_listing(
     db_path: &str,
     sha: &str,
@@ -190,24 +126,11 @@ fn write_sql_env_listing(
 ) -> Result<usize> {
     let conn = open_sql_db(db_path, false)?;
     let key = gen_env_listing_key(sha);
-    let env_data: WritableEnvironmentListing = data.into();
-    let data = bincode::serialize(&env_data)?;
-    let data_len = data.len();
-    let compressed_data = data
-        .into_iter()
-        .encode(&mut BZip2Encoder::new(6), Action::Finish)
-        .collect::<Result<Vec<_>, _>>()?;
-    debug!(
-        "Writing to DB. Key: {} Size: {} -> {} = {}",
-        key,
-        data_len,
-        compressed_data.len(),
-        data_len - compressed_data.len()
-    );
+    let serialized_data = cache::serialize_env_listing(data)?;
 
     conn.execute(
         "INSERT INTO hogan (key, data) VALUES (?1, ?2)",
-        params![key, compressed_data],
+        params![key, serialized_data],
     )
     .map_err(|e| e.into())
 }
@@ -222,18 +145,8 @@ fn read_sql_env_listing(
     let data: Option<rusqlite::Result<Vec<u8>>> =
         query.query_map(params![key], |row| row.get(0))?.next();
     if let Some(data) = data {
-        let decompressed_data = data?
-            .into_iter()
-            .decode(&mut BZip2Decoder::new())
-            .collect::<Result<Vec<_>, _>>()?;
-        let decoded: WritableEnvironmentListing = match bincode::deserialize(&decompressed_data) {
-            Ok(environment) => environment,
-            Err(e) => {
-                warn!("Unable to deserialize env: {} {:?}", key, e);
-                return Err(e.into());
-            }
-        };
-        Ok(Some(Arc::new(decoded.environments)))
+        let deserialized_data = cache::deserialize_env_listing(data?)?;
+        Ok(Some(Arc::new(deserialized_data)))
     } else {
         debug!("Unable to find {} in sqlite db", key);
         Ok(None)

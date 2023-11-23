@@ -50,6 +50,7 @@ fn main() -> Result<()> {
             db_max_age,
             fetch_poller,
             allow_fetch,
+            redis_connection,
         } => {
             server::start_up_server(
                 common,
@@ -60,6 +61,7 @@ fn main() -> Result<()> {
                 datadog,
                 environment_pattern,
                 db_path,
+                redis_connection,
                 db_max_age,
                 fetch_poller,
                 allow_fetch,
