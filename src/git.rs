@@ -124,7 +124,7 @@ fn detach_head(repo: &Repository, sha: &str) -> Result<()> {
 }
 
 pub fn ext_fetch(path: &Path, remote: &str) -> Result<()> {
-    info!("Fetching {}", remote);
+    debug!("Fetching {}", remote);
     let mut fetch_cmd = Command::new("git")
         .current_dir(path.to_str().unwrap())
         .args(["fetch", "--prune", remote])
@@ -135,7 +135,7 @@ pub fn ext_fetch(path: &Path, remote: &str) -> Result<()> {
 }
 
 pub fn ext_maintenance(path: &Path) -> Result<()> {
-    info!("Performing maintenance");
+    debug!("Performing maintenance");
     let mut maintenance_cmd = Command::new("git")
         .current_dir(path.to_str().unwrap())
         .args(["maintenance", "run", "--auto"])

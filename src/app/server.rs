@@ -3,13 +3,14 @@ use crate::app::datadogstatsd::{CustomMetrics, DdMetrics};
 use crate::app::fetch_actor;
 use crate::app::head_actor;
 use crate::storage::cache::{Cache, CleanupActor};
-use crate::storage::{lru, multi, sqlite};
+use crate::storage::{lru, multi, redis, sqlite};
 use actix_web::dev::Service;
 use actix_web::middleware::Logger;
 use actix_web::{get, middleware, post, web, HttpResponse, HttpServer};
 use anyhow::{Context, Result};
 use hogan::config::{ConfigDir, EnvironmentDescription};
 use hogan::error::HoganError;
+use itertools::Itertools;
 use parking_lot::Mutex;
 use regex::Regex;
 use riker::actors::ActorSystem;
@@ -91,7 +92,8 @@ pub fn start_up_server(
     environments_regex: Regex,
     datadog: bool,
     environment_pattern: String,
-    db_path: String,
+    db_path: Option<String>,
+    redis_connection: Option<String>,
     db_max_age: usize,
     fetch_poller: u64,
     allow_fetch: bool,
@@ -117,25 +119,43 @@ pub fn start_up_server(
         fetch_poller,
     );
 
-    let cache = Arc::new(multi::MultiCache::new(vec![
-        Box::new(lru::LruEnvCache::new("lru", cache_size)?),
-        Box::new(sqlite::SqliteCache::new(&db_path)),
-    ]));
+    info!("Adding LRU cache of size {}", cache_size);
+    let mut caches: Vec<Box<dyn Cache + Send + Sync>> =
+        vec![Box::new(lru::LruEnvCache::new("lru", cache_size)?)];
 
-    CleanupActor::init_db_cleanup_system(
-        &actor_system,
-        &[Arc::new(Box::new(sqlite::SqliteCache::new(&db_path)))],
-        db_max_age,
-        dd_metrics.clone(),
-    );
+    if let Some(connection_string) = redis_connection {
+        info!("Adding redis cache at: {}", connection_string);
+        caches.push(Box::new(redis::RedisCache::new(
+            "redis",
+            &connection_string,
+            db_max_age * 24 * 60 * 60,
+        )?));
+    }
+
+    if let Some(db_path) = db_path {
+        info!("Adding sqlite cache at: {}", db_path);
+        let sqlite_cache = Box::new(sqlite::SqliteCache::new(&db_path));
+        caches.push(sqlite_cache.clone());
+
+        info!("Starting db cleanup system");
+        CleanupActor::init_db_cleanup_system(
+            &actor_system,
+            &[Arc::new(sqlite_cache.clone())],
+            db_max_age,
+            dd_metrics.clone(),
+        );
+    }
+
+    let cache_order = caches.iter().map(|c| c.id()).join(", ");
+    info!("Caching order: {}", cache_order);
+
+    let cache = Arc::new(multi::MultiCache::new(caches));
 
     let write_lock = Mutex::new(0);
 
     info!("Starting server on {}:{}", address, port);
 
     let state = ServerState {
-        //environments,
-        //environment_listings,
         cache,
         config_dir,
         write_lock,
