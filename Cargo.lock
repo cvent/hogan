@@ -1108,6 +1108,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "bincode",
+ "cc",
  "compression",
  "dir-diff",
  "dogstatsd",
@@ -1861,9 +1862,9 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.24.0"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c580d9cbbe1d1b479e8d67cf9daf6a62c957e6846048408b80b43ac3f6af84cd"
+checksum = "4f49cdc0bb3f412bf8e7d1bd90fe1d9eb10bc5c399ba90973c14662a27b3f8ba"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1874,8 +1875,6 @@ dependencies = [
  "pin-project-lite",
  "rustls",
  "rustls-native-certs",
- "rustls-pemfile",
- "rustls-webpki",
  "ryu",
  "sha1_smol",
  "socket2 0.4.10",
