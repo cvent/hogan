@@ -77,6 +77,16 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Archive Release
+        continue-on-error: true
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: hogan
+          target: ${{ matrix.target }}
+        env:
+          # (required) GitHub token for creating GitHub Releases.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Archive Release
+        continue-on-error: true
         uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: hogan
