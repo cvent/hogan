@@ -39,7 +39,7 @@ impl Cache for RedisCache {
         let mut connection = self.client.get_connection()?;
         let serialized_data: Vec<u8> = match connection.get(&key) {
             Ok(data) => {
-                connection.expire(&key, self.ttl)?;
+                connection.expire(&key, self.ttl.try_into()?)?;
                 data
             }
             Err(_e) => return Ok(None),
@@ -67,7 +67,7 @@ impl Cache for RedisCache {
         let mut connection = self.client.get_connection()?;
         let serialized_data: Vec<u8> = match connection.get(&key) {
             Ok(data) => {
-                connection.expire(&key, self.ttl)?;
+                connection.expire(&key, self.ttl.try_into()?)?;
                 data
             }
             Err(_e) => return Ok(None),

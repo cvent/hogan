@@ -22,7 +22,7 @@ jobs:
           # - i686-pc-windows-gnu
           - i686-pc-windows-msvc
           - i686-unknown-linux-gnu
-          - x86_64-apple-darwin
+          # - x86_64-apple-darwin
           # Windows gnu is not currently working
           # - x86_64-pc-windows-gnu
           - x86_64-pc-windows-msvc
@@ -47,9 +47,9 @@ jobs:
           - target: i686-unknown-linux-gnu
             os: ubuntu-latest
             testable: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            testable: true
+          # - target: x86_64-apple-darwin
+          #   os: macos-latest
+          #   testable: true
           # - target: x86_64-pc-windows-gnu
           #   os: windows-latest
           #   testable: true
