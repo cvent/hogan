@@ -63,4 +63,4 @@ features = ['v4']
 assert_cmd = '2.0'
 dir-diff = '0.3'
 fs_extra = '1'
-predicates = '2.1'
+predicates = '2.1.5'
