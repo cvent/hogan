@@ -37,7 +37,7 @@ tempfile = '3'
 thiserror = '1.0'
 url = '2'
 walkdir = '2'
-zip = '0.6'
+zip = '9.0'
 
 [dependencies.rusqlite]
 version = '0.28'
